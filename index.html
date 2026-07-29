@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>SpizzaMi</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#E9E9E7" />
+<link rel="icon" href="icon-192.png" />
+<style>
+  :root{
+    --bg:#E9E9E7; --panel:#F6F6F4; --rule:#BEBEBA; --rule-soft:#D6D6D2;
+    --btn:#3B3B3A; --btn-hover:#242423; --ink:#000; --muted:#5A5A57; --flag:#7A5C00;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:"Times New Roman", Times, serif;
+    background:var(--bg); color:var(--ink);
+    font-size:16px; line-height:1.5; min-height:100vh;
+  }
+  button,input,textarea,select{font-family:inherit;font-size:15px;color:var(--ink)}
+  *:focus-visible{outline:2px solid #000;outline-offset:2px}
+
+  .btn{padding:7px 16px;border:1px solid var(--btn);border-radius:2px;background:var(--btn);
+       color:#fff;cursor:pointer;transition:background 120ms}
+  .btn:hover{background:var(--btn-hover)}
+  .btn.ghost{background:transparent;color:var(--ink)}
+  .btn.ghost:hover{background:#DEDEDB}
+  .btn[disabled]{opacity:.45;cursor:not-allowed}
+
+  .label{display:block;font-size:12px;letter-spacing:.09em;text-transform:uppercase;margin-bottom:4px}
+  .label .flag{text-transform:none;letter-spacing:0;color:var(--flag)}
+  .field{width:100%;padding:7px 8px;background:#fff;border:1px solid var(--rule);border-radius:2px}
+  textarea.field{resize:vertical;min-height:130px}
+  .row{margin-bottom:14px}
+
+  header{border-bottom:1px solid var(--rule);background:#E2E2DF;padding:14px 20px;
+         display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+  .wordmark{font-size:24px;letter-spacing:-.01em}
+  nav{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  main{padding:24px 20px 64px;max-width:1180px;margin:0 auto}
+
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+  .toolbar .caption{font-size:12px;letter-spacing:.09em;text-transform:uppercase}
+
+  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--rule);padding:12px;cursor:pointer;
+        transition:border-color 120ms}
+  .card:hover{border-color:#8A8A87}
+  .cover{border:1px solid var(--rule);margin-bottom:10px;background:#fff;aspect-ratio:4/3;
+         overflow:hidden;display:flex;align-items:center;justify-content:center}
+  .cover img{width:100%;height:100%;object-fit:cover;display:block}
+  .cover .none{font-size:13px;color:var(--muted)}
+  .card h3{font-size:17px;line-height:1.25;margin:0 0 7px}
+  .journal{font-style:italic}
+  .meta{font-size:14px;line-height:1.45}
+  .meta .k{color:var(--muted)}
+  .kw{border:1px solid var(--rule);background:#fff;padding:1px 7px;font-size:12.5px;
+      margin:5px 5px 0 0;display:inline-block}
+
+  table{width:100%;border-collapse:collapse;min-width:560px}
+  th{text-align:left;font-size:12px;letter-spacing:.09em;text-transform:uppercase;
+     font-weight:normal;padding:0 10px 7px 0;border-bottom:1px solid var(--rule)}
+  td{padding:9px 10px 9px 0;font-size:15px;border-bottom:1px solid var(--rule-soft)}
+  tbody tr{cursor:pointer}
+  tbody tr:hover td{background:#DFDFDC}
+  .scroll{overflow-x:auto}
+
+  .steps{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+  .steps span{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:#96968F;
+              padding-bottom:3px;border-bottom:2px solid transparent}
+  .steps span.on{color:#000;border-bottom-color:#000}
+
+  .narrow{max-width:660px}
+  .hairline{border-top:1px solid var(--rule);margin:16px 0}
+  .note{font-size:13px;color:var(--muted)}
+  .center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .banner{background:#DCDCD8;border:1px solid var(--rule);padding:10px 14px;margin-bottom:18px;
+          font-size:14.5px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .hidden{display:none}
+  .spinner{font-size:14px;color:var(--muted)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<!-- ══ Sign in ══ -->
+<div id="signin" class="center">
+  <div style="width:100%;max-width:400px">
+    <h1 class="wordmark" style="font-size:40px;margin:0">SpizzaMi</h1>
+    <div class="hairline"></div>
+    <p>Your paper library, synced across your devices through your own Google Drive.</p>
+    <p class="note">SpizzaMi stores everything in a folder called <strong>SpizzaMi</strong> in your
+      Drive. It can only see the files it created there. Nothing is sent anywhere else.</p>
+    <p style="margin-top:22px"><button class="btn" id="btn-signin">Sign in with Google</button></p>
+    <p class="note" id="signin-status"></p>
+  </div>
+</div>
+
+<!-- ══ App ══ -->
+<div id="app" class="hidden">
+  <header>
+    <span class="wordmark">SpizzaMi</span>
+    <nav>
+      <button class="btn ghost" data-view="library">Library</button>
+      <button class="btn ghost" data-view="list">List</button>
+      <button class="btn ghost" data-view="add">Add paper</button>
+      <button class="btn ghost" id="btn-signout">Sign out</button>
+    </nav>
+  </header>
+  <main>
+    <div id="reconnect" class="banner hidden">
+      <span>Your session with Google expired.</span>
+      <button class="btn" id="btn-reconnect">Reconnect</button>
+    </div>
+    <div id="view"></div>
+  </main>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="config.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════
+   SpizzaMi — a paper library that lives in your Google Drive.
+   Storage layout inside the "SpizzaMi" Drive folder:
+     library.json   the index of every paper (metadata only)
+     <id>.pdf       the paper itself
+     <id>.jpg       the cover taken from page 1
+   ═══════════════════════════════════════════════════════════ */
+
+const SCOPE  = 'https://www.googleapis.com/auth/drive.file';
+const FOLDER = 'SpizzaMi';
+const INDEX  = 'library.json';
+const CACHE  = 'spizzami.index';
+
+const S = {
+  token: null, client: null, folderId: null, indexId: null,
+  papers: [], view: 'library', topic: 'All', sort: 'year',
+  openId: null, previewId: null, draft: null, step: 1
+};
+
+const $  = (s, r = document) => r.querySelector(s);
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ── Authentication ─────────────────────────────────────── */
+function initAuth() {
+  if (!window.CLIENT_ID || CLIENT_ID.startsWith('PASTE')) {
+    $('#signin-status').textContent =
+      'Setup needed: add your Google Client ID to config.js. See README.md.';
+    $('#btn-signin').disabled = true;
+    return;
+  }
+  S.client = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPE,
+    callback: r => {
+      if (r.error) { $('#signin-status').textContent = 'Google refused the request: ' + r.error; return; }
+      S.token = r.access_token;
+      $('#reconnect').classList.add('hidden');
+      start();
+    }
+  });
+  $('#btn-signin').disabled = false;
+}
+
+function connect(silent) {
+  if (!S.client) return;
+  S.client.requestAccessToken(silent ? { prompt: '' } : {});
+}
+
+/* Access tokens last about an hour. Google asks that renewal be triggered by
+   the user, so we try silently once and otherwise surface a Reconnect button. */
+function expired() {
+  S.token = null;
+  $('#reconnect').classList.remove('hidden');
+}
+
+/* ── Drive ──────────────────────────────────────────────── */
+async function drive(path, opts = {}) {
+  const res = await fetch('https://www.googleapis.com/' + path, {
+    ...opts,
+    headers: { Authorization: 'Bearer ' + S.token, ...(opts.headers || {}) }
+  });
+  if (res.status === 401) { expired(); throw new Error('session expired'); }
+  if (!res.ok) throw new Error('Drive returned ' + res.status + ': ' + (await res.text()).slice(0, 200));
+  return res;
+}
+
+async function findOrCreateFolder() {
+  const q = encodeURIComponent(
+    `name='${FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const r = await (await drive(`drive/v3/files?q=${q}&fields=files(id)`)).json();
+  if (r.files.length) return r.files[0].id;
+  const made = await (await drive('drive/v3/files?fields=id', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: FOLDER, mimeType: 'application/vnd.google-apps.folder' })
+  })).json();
+  return made.id;
+}
+
+async function upload(name, blob, mime, fileId) {
+  const meta = fileId ? {} : { name, parents: [S.folderId] };
+  const body = new FormData();
+  body.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+  body.append('file', blob, name);
+  const path = fileId
+    ? `upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id`
+    : `upload/drive/v3/files?uploadType=multipart&fields=id`;
+  const r = await (await drive(path, { method: fileId ? 'PATCH' : 'POST', body })).json();
+  return r.id;
+}
+
+async function download(fileId) {
+  return (await drive(`drive/v3/files/${fileId}?alt=media`)).blob();
+}
+
+/* ── The index file ─────────────────────────────────────── */
+async function loadIndex() {
+  const q = encodeURIComponent(`name='${INDEX}' and '${S.folderId}' in parents and trashed=false`);
+  const r = await (await drive(`drive/v3/files?q=${q}&fields=files(id)`)).json();
+  if (!r.files.length) { S.indexId = null; S.papers = []; return; }
+  S.indexId = r.files[0].id;
+  const text = await (await download(S.indexId)).text();
+  S.papers = JSON.parse(text).papers || [];
+  localStorage.setItem(CACHE, text);
+}
+
+/* Merge before writing, so editing on the phone does not erase what the
+   laptop saved a minute earlier. Newer edit of the same paper wins. */
+async function saveIndex() {
+  let remote = [];
+  try {
+    if (S.indexId) remote = JSON.parse(await (await download(S.indexId)).text()).papers || [];
+  } catch (e) { /* first write, or offline */ }
+  const merged = new Map();
+  for (const p of [...remote, ...S.papers]) {
+    const seen = merged.get(p.id);
+    if (!seen || (p.updatedAt || '') >= (seen.updatedAt || '')) merged.set(p.id, p);
+  }
+  S.papers = [...merged.values()];
+  const text = JSON.stringify({ version: 1, papers: S.papers }, null, 2);
+  const blob = new Blob([text], { type: 'application/json' });
+  S.indexId = await upload(INDEX, blob, 'application/json', S.indexId);
+  localStorage.setItem(CACHE, text);
+}
+
+/* ── Reading the PDF ────────────────────────────────────── */
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+async function readPdf(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const page = await pdf.getPage(1);
+
+  /* Cover: page 1 rendered to a JPEG. */
+  const vp = page.getViewport({ scale: 1 });
+  const scale = 900 / vp.width;
+  const view = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = view.width; canvas.height = view.height;
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport: view }).promise;
+  const cover = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.72));
+
+  /* Text of the first two pages, keeping font size so we can spot the title. */
+  const items = (await page.getTextContent()).items;
+  let text = items.map(i => i.str).join(' ');
+  if (pdf.numPages > 1) {
+    const p2 = await pdf.getPage(2);
+    text += ' ' + (await p2.getTextContent()).items.map(i => i.str).join(' ');
+  }
+  text = text.replace(/\s+/g, ' ').trim();
+
+  return { cover, guess: guessMetadata(items, text, view.height), raw: text };
+}
+
+/* Heuristics. These are wrong often enough that the review screen is not
+   optional — it is where the real metadata gets set. */
+function guessMetadata(items, text, pageHeight) {
+  /* Title: the largest type in the upper half of page one. */
+  const top = items.filter(i => i.str.trim().length > 1 && i.transform[5] > pageHeight * 0.45);
+  let title = '';
+  if (top.length) {
+    const size = i => Math.abs(i.transform[0]) || i.height || 0;
+    const biggest = Math.max(...top.map(size));
+    title = top.filter(i => size(i) > biggest * 0.92).map(i => i.str).join(' ')
+               .replace(/\s+/g, ' ').trim();
+  }
+  if (title.length > 300) title = title.slice(0, 300);
+
+  const years = (text.match(/\b(19|20)\d{2}\b/g) || []).map(Number)
+                  .filter(y => y >= 1950 && y <= new Date().getFullYear() + 1);
+  const year = years.length ? Math.max(...years) : '';
+
+  const doi = (text.match(/\b10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+/) || [''])[0].replace(/[.,;]$/, '');
+  const emails = [...new Set(text.match(/[\w.+-]+@[\w-]+\.[\w.]{2,}/g) || [])];
+
+  /* Abstract: between the heading and whatever ends it. */
+  let abstract = '';
+  const a = text.search(/\bAbstract\b/i);
+  if (a > -1) {
+    const rest = text.slice(a + 8);
+    const stop = rest.search(/\b(Keywords?|Key words|Introduction|1\s*\.\s*Introduction)\b/i);
+    abstract = (stop > 40 ? rest.slice(0, stop) : rest.slice(0, 1800)).trim();
+  }
+
+  return { title, year: year || '', doi, emails, abstract, journal: '', firstAuthor: '',
+           corresponding: emails.length ? emails[0] : '' };
+}
+
+/* ── Views ──────────────────────────────────────────────── */
+function topics() { return [...new Set(S.papers.map(p => p.topic).filter(Boolean))].sort(); }
+
+function filtered() {
+  return S.topic === 'All' ? S.papers : S.papers.filter(p => p.topic === S.topic);
+}
+
+function topicBar() {
+  return ['All', ...topics()].map(t =>
+    `<button class="btn ${t === S.topic ? '' : 'ghost'}" data-topic="${esc(t)}">${esc(t)}</button>`
+  ).join('');
+}
+
+function cardHtml(p) {
+  return `<article class="card" data-open="${p.id}" tabindex="0">
+    <div class="cover">${p.coverId
+      ? `<img alt="" data-cover="${p.coverId}">`
+      : `<span class="none">No cover</span>`}</div>
+    <h3>${esc(p.title) || 'Untitled'}</h3>
+    <div class="journal">${esc(p.journal)}</div>
+    <div>${esc(p.year)}</div>
+    <div class="meta" style="margin-top:6px">
+      <div><span class="k">First author: </span>${esc(p.firstAuthor)}</div>
+      <div><span class="k">Corresponding: </span>${esc((p.corresponding || []).join(', '))}</div>
+    </div>
+    <div>${(p.keywords || []).map(k => `<span class="kw">${esc(k)}</span>`).join('')}</div>
+  </article>`;
+}
+
+function renderLibrary() {
+  const list = filtered();
+  return `<div class="toolbar">${topicBar()}</div>` + (list.length
+    ? `<div class="grid">${list.map(cardHtml).join('')}</div>`
+    : `<p>No papers here yet. Add one to get started.</p>`);
+}
+
+function renderList() {
+  const rows = [...filtered()].sort((a, b) =>
+    S.sort === 'year'    ? (b.year || 0) - (a.year || 0)
+  : S.sort === 'journal' ? String(a.journal).localeCompare(String(b.journal))
+  : String((a.corresponding || [''])[0]).split(' ').pop()
+      .localeCompare(String((b.corresponding || [''])[0]).split(' ').pop()));
+
+  return `<div class="toolbar">${topicBar()}</div>
+    <div class="toolbar"><span class="caption">Sort by</span>
+      ${['year', 'journal', 'corresponding'].map(s =>
+        `<button class="btn ${s === S.sort ? '' : 'ghost'}" data-sort="${s}">${s}</button>`).join('')}
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>First author</th><th>Corresponding author</th><th>Journal</th><th>Year</th></tr></thead>
+      <tbody>${rows.map(p => `<tr data-preview="${p.id}" tabindex="0">
+        <td>${esc(p.firstAuthor)}</td>
+        <td>${esc((p.corresponding || []).join(', '))}</td>
+        <td class="journal">${esc(p.journal)}</td>
+        <td>${esc(p.year)}</td></tr>`).join('')}
+      </tbody></table></div>
+    <p class="note">Tap a row to see the card with its graphical abstract.</p>`;
+}
+
+function renderPreview() {
+  const p = S.papers.find(x => x.id === S.previewId);
+  if (!p) return renderList();
+  return `<button class="btn ghost" data-back="list">&larr; Back to list</button>
+    <div style="max-width:320px;margin-top:16px">${cardHtml(p)}</div>
+    <p class="note">Tap the card for the abstract and the PDF.</p>`;
+}
+
+function renderPaper() {
+  const p = S.papers.find(x => x.id === S.openId);
+  if (!p) return renderLibrary();
+  return `<div class="narrow">
+    <button class="btn ghost" data-back="${S.previewId ? 'preview' : 'library'}">&larr; Back</button>
+    <h2 style="font-size:26px;line-height:1.25;margin:18px 0 10px">${esc(p.title)}</h2>
+    <div style="font-size:16px"><span class="journal">${esc(p.journal)}</span> &middot; ${esc(p.year)}</div>
+    <div class="meta" style="font-size:15px;margin-top:4px">
+      <div><span class="k">First author: </span>${esc(p.firstAuthor)}</div>
+      <div><span class="k">Corresponding: </span>${esc((p.corresponding || []).join(', '))}</div>
+      <div><span class="k">Topic: </span>${esc(p.topic)}</div>
+      ${p.doi ? `<div><span class="k">DOI: </span>${esc(p.doi)}</div>` : ''}
+    </div>
+    <div>${(p.keywords || []).map(k => `<span class="kw">${esc(k)}</span>`).join('')}</div>
+    <div class="hairline"></div>
+    <span class="label">Abstract</span>
+    <p style="text-align:justify;margin:0">${esc(p.abstract) || 'No abstract was found in the PDF.'}</p>
+    <p style="margin-top:24px">
+      <button class="btn" data-pdf="${p.pdfId}">Open the PDF</button>
+      <button class="btn ghost" data-edit="${p.id}">Edit details</button>
+      <button class="btn ghost" data-delete="${p.id}">Remove</button>
+    </p></div>`;
+}
+
+function renderAdd() {
+  const d = S.draft;
+  const step = S.step;
+  const head = `<div class="steps">
+    ${['File', 'Topic and keywords', 'Review and correct'].map((t, i) =>
+      `<span class="${step === i + 1 ? 'on' : ''}">${i + 1}. ${t}</span>`).join('')}
+  </div>`;
+
+  if (step === 1) return head + `<div class="narrow">
+    <p>Choose the PDF. SpizzaMi reads the title, year, abstract and cover from the file itself,
+       and you correct whatever it got wrong before saving.</p>
+    <input type="file" accept="application/pdf" id="pdf-input" />
+    <p id="read-status" class="spinner"></p></div>`;
+
+  if (step === 2) return head + `<div class="narrow">
+    <span class="label">Topic</span>
+    <div class="toolbar">
+      ${topics().map(t => `<button class="btn ${d.topic === t ? '' : 'ghost'}" data-pick-topic="${esc(t)}">${esc(t)}</button>`).join('')}
+      <button class="btn ${d.newTopic ? '' : 'ghost'}" data-pick-topic="__new">+ New topic</button>
+    </div>
+    ${d.newTopic ? `<div class="row"><span class="label">Name of the new topic</span>
+      <input class="field" id="f-newtopic" value="${esc(d.topic)}"></div>` : ''}
+    ${[0, 1, 2].map(i => `<div class="row"><span class="label">Keyword ${i + 1}</span>
+      <input class="field" id="f-kw${i}" value="${esc(d.keywords[i] || '')}"></div>`).join('')}
+    <button class="btn" data-step="3">Continue</button>
+    <button class="btn ghost" data-step="1">Back</button></div>`;
+
+  return head + `<div class="narrow">
+    <p>Here is what SpizzaMi read from the file. Check it and fix what is wrong.</p>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:18px">
+      <div class="cover" style="width:190px"><img id="draft-cover" alt=""></div>
+      <div style="font-size:14px;max-width:280px">
+        <p style="margin-top:0">Cover taken from page 1.</p>
+        <input type="file" accept="image/*" id="cover-input" />
+        <p class="note">Pick an image to use the real graphical abstract instead.</p>
+      </div>
+    </div>
+    <div class="row"><span class="label">Title</span><input class="field" id="f-title" value="${esc(d.title)}"></div>
+    <div class="row"><span class="label">Journal <span class="flag">&middot; rarely detected, type it in</span></span>
+      <input class="field" id="f-journal" value="${esc(d.journal)}"></div>
+    <div class="row"><span class="label">Year</span><input class="field" id="f-year" value="${esc(d.year)}"></div>
+    <div class="row"><span class="label">First author <span class="flag">&middot; rarely detected, type it in</span></span>
+      <input class="field" id="f-first" value="${esc(d.firstAuthor)}"></div>
+    <div class="row"><span class="label">Corresponding author <span class="flag">&middot; check this one</span></span>
+      <input class="field" id="f-corr" value="${esc(d.corresponding)}">
+      ${d.emails && d.emails.length
+        ? `<p class="note">Emails found in the paper: ${esc(d.emails.join(', '))}</p>` : ''}</div>
+    <div class="row"><span class="label">DOI</span><input class="field" id="f-doi" value="${esc(d.doi || '')}"></div>
+    <div class="row"><span class="label">Abstract</span><textarea class="field" id="f-abstract">${esc(d.abstract)}</textarea></div>
+    <button class="btn" id="btn-save">Save to library</button>
+    <button class="btn ghost" data-step="2">Back</button>
+    <p id="save-status" class="spinner"></p></div>`;
+}
+
+function render() {
+  const v = $('#view');
+  v.innerHTML =
+      S.openId    ? renderPaper()
+    : S.previewId ? renderPreview()
+    : S.view === 'library' ? renderLibrary()
+    : S.view === 'list'    ? renderList()
+    : renderAdd();
+
+  document.querySelectorAll('nav [data-view]').forEach(b =>
+    b.classList.toggle('ghost', !(b.dataset.view === S.view && !S.openId && !S.previewId)));
+
+  if (S.draft && S.draft.coverUrl) { const i = $('#draft-cover'); if (i) i.src = S.draft.coverUrl; }
+  document.querySelectorAll('img[data-cover]').forEach(showCover);
+}
+
+/* Covers are fetched once and kept for the session. */
+const coverCache = new Map();
+async function showCover(img) {
+  const id = img.dataset.cover;
+  if (coverCache.has(id)) { img.src = coverCache.get(id); return; }
+  try {
+    const url = URL.createObjectURL(await download(id));
+    coverCache.set(id, url);
+    img.src = url;
+  } catch (e) { img.replaceWith(Object.assign(document.createElement('span'),
+      { className: 'none', textContent: 'Cover unavailable' })); }
+}
+
+/* ── Events ─────────────────────────────────────────────── */
+document.addEventListener('click', async e => {
+  const t = e.target.closest('[data-view],[data-topic],[data-sort],[data-open],[data-preview],[data-back],[data-step],[data-pick-topic],[data-pdf],[data-delete],[data-edit]');
+  if (!t) return;
+  const d = t.dataset;
+
+  if (d.view)    { S.view = d.view; S.openId = S.previewId = null;
+                   if (d.view === 'add') { S.draft = null; S.step = 1; } return render(); }
+  if (d.topic)   { S.topic = d.topic; return render(); }
+  if (d.sort)    { S.sort = d.sort; return render(); }
+  if (d.open)    { S.openId = d.open; return render(); }
+  if (d.preview) { S.previewId = d.preview; return render(); }
+  if (d.back)    { if (d.back === 'library') { S.openId = S.previewId = null; S.view = 'library'; }
+                   else if (d.back === 'list') { S.previewId = null; S.view = 'list'; }
+                   else S.openId = null;
+                   return render(); }
+  if (d.step)    { collectDraft(); S.step = Number(d.step); return render(); }
+
+  if (d.pickTopic) {
+    if (d.pickTopic === '__new') { S.draft.newTopic = true; S.draft.topic = ''; }
+    else { S.draft.newTopic = false; S.draft.topic = d.pickTopic; }
+    collectDraft(true); return render();
+  }
+
+  if (d.pdf) {
+    t.disabled = true; t.textContent = 'Opening…';
+    try {
+      const url = URL.createObjectURL(await download(d.pdf));
+      window.open(url, '_blank');
+    } catch (err) { alert('The PDF could not be opened: ' + err.message); }
+    t.disabled = false; t.textContent = 'Open the PDF';
+  }
+
+  if (d.edit) {
+    const p = S.papers.find(x => x.id === d.edit);
+    S.draft = { ...p, corresponding: (p.corresponding || []).join(', '),
+                keywords: p.keywords || [], editing: p.id, newTopic: false, emails: [] };
+    S.view = 'add'; S.step = 3; S.openId = null; return render();
+  }
+
+  if (d.delete) {
+    if (!confirm('Remove this paper from the library? The files stay in your Drive folder.')) return;
+    S.papers = S.papers.filter(x => x.id !== d.delete);
+    S.openId = null;
+    await saveIndex(); S.view = 'library'; return render();
+  }
+});
+
+/* Keyboard: cards and rows behave like buttons. */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.matches('[data-open],[data-preview]')) e.target.click();
+});
+
+document.addEventListener('change', async e => {
+  if (e.target.id === 'pdf-input') {
+    const file = e.target.files[0];
+    if (!file) return;
+    $('#read-status').textContent = 'Reading the PDF…';
+    try {
+      const { cover, guess } = await readPdf(file);
+      S.draft = { ...guess, corresponding: guess.corresponding, keywords: ['', '', ''],
+                  topic: topics()[0] || '', newTopic: !topics().length,
+                  file, cover, coverUrl: URL.createObjectURL(cover) };
+      S.step = 2; render();
+    } catch (err) { $('#read-status').textContent = 'That file could not be read: ' + err.message; }
+  }
+
+  if (e.target.id === 'cover-input') {
+    const img = e.target.files[0];
+    if (!img) return;
+    S.draft.cover = img;
+    S.draft.coverUrl = URL.createObjectURL(img);
+    collectDraft(true); render();
+  }
+});
+
+function collectDraft(keep) {
+  const d = S.draft; if (!d) return;
+  const val = id => { const el = document.getElementById(id); return el ? el.value : undefined; };
+  if (S.step === 2) {
+    if (d.newTopic && val('f-newtopic') !== undefined) d.topic = val('f-newtopic').trim();
+    d.keywords = [0, 1, 2].map(i => (val('f-kw' + i) ?? d.keywords[i] ?? '').trim());
+  }
+  if (S.step === 3) {
+    const map = { title: 'f-title', journal: 'f-journal', year: 'f-year',
+                  firstAuthor: 'f-first', corresponding: 'f-corr', doi: 'f-doi', abstract: 'f-abstract' };
+    for (const [k, id] of Object.entries(map)) { const v = val(id); if (v !== undefined) d[k] = v; }
+  }
+  if (!keep) return;
+}
+
+document.addEventListener('click', async e => {
+  if (e.target.id !== 'btn-save') return;
+  collectDraft();
+  const d = S.draft, btn = e.target, status = $('#save-status');
+  if (!d.title.trim()) { status.textContent = 'A title is needed before saving.'; return; }
+  btn.disabled = true; status.textContent = 'Saving to your Drive…';
+  try {
+    const id = d.editing || (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+    let pdfId = d.pdfId, coverId = d.coverId;
+    if (d.file)  { status.textContent = 'Uploading the PDF…'; pdfId = await upload(id + '.pdf', d.file, 'application/pdf'); }
+    if (d.cover) { status.textContent = 'Uploading the cover…'; coverId = await upload(id + '.jpg', d.cover, 'image/jpeg'); }
+
+    const paper = {
+      id, topic: d.topic || 'Unsorted', title: d.title.trim(), journal: d.journal.trim(),
+      year: Number(d.year) || d.year, firstAuthor: d.firstAuthor.trim(),
+      corresponding: d.corresponding.split(',').map(s => s.trim()).filter(Boolean),
+      keywords: d.keywords.filter(Boolean), abstract: d.abstract.trim(), doi: (d.doi || '').trim(),
+      pdfId, coverId, updatedAt: new Date().toISOString()
+    };
+    S.papers = [paper, ...S.papers.filter(p => p.id !== id)];
+    status.textContent = 'Updating the library…';
+    await saveIndex();
+    S.draft = null; S.step = 1; S.view = 'library'; S.topic = 'All'; render();
+  } catch (err) {
+    btn.disabled = false;
+    status.textContent = 'Nothing was saved: ' + err.message + ' — try again.';
+  }
+});
+
+$('#btn-signin').onclick    = () => connect(false);
+$('#btn-reconnect').onclick = () => connect(false);
+$('#btn-signout').onclick   = () => {
+  if (S.token) google.accounts.oauth2.revoke(S.token, () => {});
+  S.token = null; S.papers = []; coverCache.clear();
+  $('#app').classList.add('hidden'); $('#signin').classList.remove('hidden');
+};
+
+/* ── Start ──────────────────────────────────────────────── */
+async function start() {
+  $('#signin').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  $('#view').innerHTML = '<p class="spinner">Opening your library…</p>';
+  try {
+    S.folderId = await findOrCreateFolder();
+    await loadIndex();
+  } catch (err) {
+    const cached = localStorage.getItem(CACHE);
+    if (cached) { S.papers = JSON.parse(cached).papers || []; }
+    else { $('#view').innerHTML = '<p>Your library could not be opened: ' + esc(err.message) + '</p>'; return; }
+  }
+  render();
+}
+
+window.onload = () => {
+  const wait = setInterval(() => {
+    if (window.google && google.accounts) { clearInterval(wait); initAuth(); }
+  }, 100);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+};
+</script>
+</body>
+</html>

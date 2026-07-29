@@ -1,0 +1,16 @@
+{
+  "name": "SpizzaMi",
+  "short_name": "SpizzaMi",
+  "description": "Your scientific paper library, synced through your own Google Drive.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#E9E9E7",
+  "theme_color": "#E9E9E7",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
