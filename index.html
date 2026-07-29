@@ -78,6 +78,13 @@
   .center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
   .banner{background:#DCDCD8;border:1px solid var(--rule);padding:10px 14px;margin-bottom:18px;
           font-size:14.5px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .search{display:flex;align-items:center;background:#fff;border:1px solid var(--rule);
+          border-radius:2px;flex:1;min-width:180px;max-width:420px}
+  .search input{flex:1;min-width:0;border:none;background:transparent;padding:7px 9px;outline:none}
+  .search button{border:none;background:transparent;cursor:pointer;padding:5px 9px;
+                 display:flex;align-items:center;border-left:1px solid var(--rule-soft)}
+  .search button:hover{background:#EDEDEA}
+  .search:focus-within{outline:2px solid #000;outline-offset:2px}
   .kwpanel{background:var(--panel);border:1px solid var(--rule);padding:10px 12px;margin-bottom:16px}
   .kwbox{display:inline-block;font-size:13px;margin:0 14px 6px 0;cursor:pointer;white-space:nowrap}
   .kwbox input{margin-right:4px;vertical-align:middle}
@@ -519,11 +526,21 @@ function filterBar() {
   const all = keywordsInScope();
   const on = all.length - all.filter(k => S.kwOff.has(k)).length;
   return `<div class="toolbar">
-      <input class="field" id="search" placeholder="Search titles, authors, abstracts"
-             value="${esc(S.query)}" style="flex:1;min-width:190px;max-width:420px">
-      <button class="btn ${S.kwOpen ? '' : 'ghost'}" id="btn-kw">Keywords${
-        S.kwOff.size ? ` (${on}/${all.length})` : ''}</button>
-      ${filtering() ? `<button class="btn ghost" id="btn-clear">Clear filters</button>` : ''}
+      <span class="search">
+        <input id="search" placeholder="Search titles, authors, abstracts"
+               value="${esc(S.query)}" aria-label="Search the library">
+        <button id="btn-search" aria-label="Search" title="Search">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="7" cy="7" r="5" stroke="#000" stroke-width="1.6"/>
+            <path d="M10.8 10.8 L14.5 14.5" stroke="#000" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </span>
+      <span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+        ${filtering() ? `<button class="btn ghost" id="btn-clear">Clear filters</button>` : ''}
+        <button class="btn ${S.kwOpen ? '' : 'ghost'}" id="btn-kw">Keywords${
+          S.kwOff.size ? ` (${on}/${all.length})` : ''}</button>
+      </span>
     </div>
     ${S.kwOpen ? `<div class="kwpanel">
       <div style="margin-bottom:8px">
@@ -951,6 +968,10 @@ document.addEventListener('click', async e => {
   }
 
   if (id === 'btn-kw')    { S.kwOpen = !S.kwOpen; render(); }
+  if (e.target.closest && e.target.closest('#btn-search')) {
+    const el = $('#search');
+    if (el) { S.query = el.value; render(); const n = $('#search'); if (n) n.focus(); }
+  }
   if (id === 'kw-all')    { S.kwOff.clear(); render(); }
   if (id === 'kw-none')   { S.kwOff = new Set(keywordsInScope()); render(); }
   if (id === 'btn-clear') { S.query = ''; S.kwOff.clear(); render(); }
