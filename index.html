@@ -275,7 +275,70 @@ async function readPdf(file) {
   }
   text = text.replace(/\s+/g, ' ').trim();
 
-  return { cover, guess: guessMetadata(items, text, view.height), raw: text };
+  return { cover, doc: pdf, pages: pdf.numPages,
+           guess: guessMetadata(items, text, view.height), raw: text };
+}
+
+/* ── Choosing the cover ─────────────────────────────────
+   The graphical abstract is a box somewhere on a page, so the useful tool is
+   pick a page, then drag a rectangle around it. */
+async function showPage(n) {
+  const d = S.draft;
+  if (!d || !d.doc) return;
+  const page = await d.doc.getPage(n);
+  const base = page.getViewport({ scale: 1 });
+  const hi = document.createElement('canvas');
+  const scale = 1700 / base.width;
+  const vp = page.getViewport({ scale });
+  hi.width = vp.width; hi.height = vp.height;
+  await page.render({ canvasContext: hi.getContext('2d'), viewport: vp }).promise;
+
+  d.hi = hi; d.page = n;
+  const c = $('#page-canvas');
+  if (!c) return;
+  const w = Math.min(560, c.parentElement.clientWidth || 560);
+  c.width = w; c.height = Math.round(hi.height * (w / hi.width));
+  d.ratio = hi.width / c.width;
+  paintPage();
+}
+
+function paintPage() {
+  const d = S.draft, c = $('#page-canvas');
+  if (!c || !d || !d.hi) return;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, c.width, c.height);
+  g.drawImage(d.hi, 0, 0, c.width, c.height);
+  if (d.sel) {
+    const s = d.sel;
+    g.fillStyle = 'rgba(0,0,0,.30)';
+    g.fillRect(0, 0, c.width, c.height);
+    g.clearRect(s.x, s.y, s.w, s.h);
+    g.drawImage(d.hi, s.x * d.ratio, s.y * d.ratio, s.w * d.ratio, s.h * d.ratio,
+                s.x, s.y, s.w, s.h);
+    g.strokeStyle = '#000'; g.lineWidth = 1.5;
+    g.strokeRect(s.x, s.y, s.w, s.h);
+  }
+}
+
+async function cropCover() {
+  const d = S.draft;
+  if (!d || !d.hi) return;
+  const s = d.sel;
+  const out = document.createElement('canvas');
+  if (s && s.w > 12 && s.h > 12) {
+    out.width = Math.round(s.w * d.ratio); out.height = Math.round(s.h * d.ratio);
+    out.getContext('2d').drawImage(d.hi, s.x * d.ratio, s.y * d.ratio,
+      s.w * d.ratio, s.h * d.ratio, 0, 0, out.width, out.height);
+  } else {
+    out.width = d.hi.width; out.height = d.hi.height;
+    out.getContext('2d').drawImage(d.hi, 0, 0);
+  }
+  const blob = await new Promise(r => out.toBlob(r, 'image/jpeg', 0.78));
+  d.cover = blob;
+  if (d.coverUrl) URL.revokeObjectURL(d.coverUrl);
+  d.coverUrl = URL.createObjectURL(blob);
+  d.picking = false;
+  render();
 }
 
 /* Heuristics. These are wrong often enough that the review screen is not
@@ -292,9 +355,7 @@ function guessMetadata(items, text, pageHeight) {
   }
   if (title.length > 300) title = title.slice(0, 300);
 
-  const years = (text.match(/\b(19|20)\d{2}\b/g) || []).map(Number)
-                  .filter(y => y >= 1950 && y <= new Date().getFullYear() + 1);
-  const year = years.length ? Math.max(...years) : '';
+  const year = guessYear(text);
 
   const doi = (text.match(/\b10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+/) || [''])[0].replace(/[.,;]$/, '');
   const emails = [...new Set(text.match(/[\w.+-]+@[\w-]+\.[\w.]{2,}/g) || [])];
@@ -310,6 +371,89 @@ function guessMetadata(items, text, pageHeight) {
 
   return { title, year: year || '', doi, emails, abstract, journal: '', firstAuthor: '',
            corresponding: emails.length ? emails[0] : '' };
+}
+
+/* A paper is full of years — copyright lines, reference lists, submission dates.
+   Prefer a year that sits next to something that means "published". */
+function guessYear(text) {
+  const max = new Date().getFullYear() + 1;
+  const ok = y => y >= 1950 && y <= max;
+
+  const near = [
+    /©\s*[^0-9]{0,60}((?:19|20)\d{2})/,
+    /((?:19|20)\d{2})\s*[^0-9]{0,40}©/,
+    /(?:Published|Accepted|Received|Revised|First published)[^.]{0,90}?((?:19|20)\d{2})/i
+  ];
+  for (const re of near) {
+    const m = text.match(re);
+    if (m && ok(Number(m[1]))) return Number(m[1]);
+  }
+
+  /* Otherwise the year that repeats most: headers and footers carry it. */
+  const all = (text.match(/\b(?:19|20)\d{2}\b/g) || []).map(Number).filter(ok);
+  if (!all.length) return '';
+  const count = {};
+  all.forEach(y => count[y] = (count[y] || 0) + 1);
+  return Number(Object.keys(count).sort((a, b) => count[b] - count[a] || b - a)[0]);
+}
+
+/* ── CrossRef ───────────────────────────────────────────
+   The publisher's own record, looked up by DOI. Far more reliable than
+   anything that can be inferred from how a page is laid out. */
+async function fromCrossref(doi) {
+  const clean = String(doi).trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, '');
+  if (!/^10\.\d{4,9}\//.test(clean)) throw new Error('That does not look like a DOI.');
+
+  const res = await fetch('https://api.crossref.org/works/' + encodeURIComponent(clean) +
+                          '?mailto=spizzami-app');
+  if (res.status === 404) throw new Error('CrossRef has no record for this DOI.');
+  if (!res.ok) throw new Error('CrossRef replied ' + res.status);
+  const w = (await res.json()).message;
+
+  const authors = (w.author || []).map(a =>
+    [a.given, a.family].filter(Boolean).join(' ').trim()).filter(Boolean);
+  const first = (w.author || []).find(a => a.sequence === 'first');
+  const firstAuthor = first
+    ? [first.given, first.family].filter(Boolean).join(' ').trim()
+    : (authors[0] || '');
+
+  const dateParts = (w.issued && w.issued['date-parts'] && w.issued['date-parts'][0]) ||
+                    (w['published-print'] && w['published-print']['date-parts'][0]) ||
+                    (w['published-online'] && w['published-online']['date-parts'][0]) || [];
+
+  /* CrossRef abstracts arrive as JATS markup when they arrive at all. */
+  let abstract = '';
+  if (w.abstract) {
+    abstract = w.abstract.replace(/<[^>]+>/g, ' ')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ').replace(/^\s*Abstract\s*/i, '').trim();
+  }
+
+  return {
+    title: Array.isArray(w.title) ? w.title[0] : (w.title || ''),
+    journal: (Array.isArray(w['container-title']) ? w['container-title'][0]
+             : w['container-title']) || '',
+    year: dateParts[0] || '',
+    firstAuthor,
+    authors,
+    abstract,
+    doi: clean
+  };
+}
+
+/* CrossRef wins on the fields it knows; anything it leaves empty keeps
+   whatever the PDF gave us. Corresponding author is never in the record. */
+function mergeCrossref(draft, cr) {
+  for (const k of ['title', 'journal', 'year', 'firstAuthor', 'doi']) {
+    if (cr[k]) draft[k] = String(cr[k]);
+  }
+  if (cr.abstract && cr.abstract.length > (draft.abstract || '').length) draft.abstract = cr.abstract;
+  draft.authors = cr.authors || [];
+  if (!draft.corresponding && cr.authors && cr.authors.length) {
+    draft.corresponding = cr.authors[cr.authors.length - 1];
+    draft.correspondingGuessed = true;
+  }
+  return draft;
 }
 
 /* ── Views ──────────────────────────────────────────────── */
@@ -431,26 +575,54 @@ function renderAdd() {
     <button class="btn ghost" data-step="1">Back</button></div>`;
 
   return head + `<div class="narrow">
-    <p>Here is what SpizzaMi read from the file. Check it and fix what is wrong.</p>
-    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:18px">
+    <p>The DOI lookup fills these fields from the publisher's own record. Check them
+       before saving.</p>
+
+    <div class="row"><span class="label">DOI</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input class="field" id="f-doi" style="flex:1;min-width:200px" value="${esc(d.doi || '')}">
+        <button class="btn" id="btn-doi">Fetch details</button>
+      </div>
+      <p class="note" id="doi-status">${d.doi ? ''
+        : 'No DOI found in the PDF. Paste one here to fill the fields automatically.'}</p>
+    </div>
+
+    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px">
       <div class="cover" style="width:190px"><img id="draft-cover" alt=""></div>
-      <div style="font-size:14px;max-width:280px">
-        <p style="margin-top:0">Cover taken from page 1.</p>
+      <div style="font-size:14px;max-width:300px">
+        <p style="margin-top:0"><button class="btn ghost" id="btn-pick">Choose cover from the PDF</button></p>
         <input type="file" accept="image/*" id="cover-input" />
-        <p class="note">Pick an image to use the real graphical abstract instead.</p>
+        <p class="note">Or an image saved on this device.</p>
       </div>
     </div>
+
+    ${d.picking ? `<div style="margin-bottom:20px">
+      <div class="toolbar"><span class="caption">Page</span>
+        ${Array.from({ length: Math.min(d.pages || 1, 12) }, (_, i) =>
+          `<button class="btn ${d.page === i + 1 ? '' : 'ghost'}" data-page="${i + 1}">${i + 1}</button>`).join('')}
+      </div>
+      <canvas id="page-canvas" style="border:1px solid var(--rule);background:#fff;
+              touch-action:none;max-width:100%;cursor:crosshair"></canvas>
+      <p class="note">Drag a rectangle around the graphical abstract. Without a selection
+         the whole page is used.</p>
+      <button class="btn" id="btn-crop">Use this</button>
+      <button class="btn ghost" id="btn-nocrop">Cancel</button>
+    </div>` : ''}
+
     <div class="row"><span class="label">Title</span><input class="field" id="f-title" value="${esc(d.title)}"></div>
-    <div class="row"><span class="label">Journal <span class="flag">&middot; rarely detected, type it in</span></span>
+    <div class="row"><span class="label">Journal</span>
       <input class="field" id="f-journal" value="${esc(d.journal)}"></div>
     <div class="row"><span class="label">Year</span><input class="field" id="f-year" value="${esc(d.year)}"></div>
-    <div class="row"><span class="label">First author <span class="flag">&middot; rarely detected, type it in</span></span>
+    <div class="row"><span class="label">First author</span>
       <input class="field" id="f-first" value="${esc(d.firstAuthor)}"></div>
-    <div class="row"><span class="label">Corresponding author <span class="flag">&middot; check this one</span></span>
+    <div class="row"><span class="label">Corresponding author <span class="flag">&middot; always check this one</span></span>
       <input class="field" id="f-corr" value="${esc(d.corresponding)}">
+      ${d.correspondingGuessed
+        ? `<p class="note">Filled with the last author, which is only a convention &mdash; confirm it.</p>` : ''}
+      ${d.authors && d.authors.length
+        ? `<p class="note">All authors: ${esc(d.authors.join(', '))}</p>` : ''}
       ${d.emails && d.emails.length
-        ? `<p class="note">Emails found in the paper: ${esc(d.emails.join(', '))}</p>` : ''}</div>
-    <div class="row"><span class="label">DOI</span><input class="field" id="f-doi" value="${esc(d.doi || '')}"></div>
+        ? `<p class="note">Emails in the PDF: ${esc(d.emails.join(', '))}</p>` : ''}</div>
     <div class="row"><span class="label">Abstract</span><textarea class="field" id="f-abstract">${esc(d.abstract)}</textarea></div>
     <button class="btn" id="btn-save">Save to library</button>
     <button class="btn ghost" data-step="2">Back</button>
@@ -470,6 +642,7 @@ function render() {
     b.classList.toggle('ghost', !(b.dataset.view === S.view && !S.openId && !S.previewId)));
 
   if (S.draft && S.draft.coverUrl) { const i = $('#draft-cover'); if (i) i.src = S.draft.coverUrl; }
+  if (S.draft && S.draft.picking) showPage(S.draft.page || 1);
   document.querySelectorAll('img[data-cover]').forEach(showCover);
 }
 
@@ -488,7 +661,7 @@ async function showCover(img) {
 
 /* ── Events ─────────────────────────────────────────────── */
 document.addEventListener('click', async e => {
-  const t = e.target.closest('[data-view],[data-topic],[data-sort],[data-open],[data-preview],[data-back],[data-step],[data-pick-topic],[data-pdf],[data-delete],[data-edit]');
+  const t = e.target.closest('[data-view],[data-topic],[data-sort],[data-open],[data-preview],[data-back],[data-step],[data-pick-topic],[data-pdf],[data-delete],[data-edit],[data-page]');
   if (!t) return;
   const d = t.dataset;
 
@@ -503,6 +676,8 @@ document.addEventListener('click', async e => {
                    else S.openId = null;
                    return render(); }
   if (d.step)    { collectDraft(); S.step = Number(d.step); return render(); }
+  if (d.page)    { collectDraft(); S.draft.page = Number(d.page); S.draft.sel = null;
+                   render(); return showPage(Number(d.page)); }
 
   if (d.pickTopic) {
     if (d.pickTopic === '__new') { S.draft.newTopic = true; S.draft.topic = ''; }
@@ -545,10 +720,15 @@ document.addEventListener('change', async e => {
     if (!file) return;
     $('#read-status').textContent = 'Reading the PDF…';
     try {
-      const { cover, guess } = await readPdf(file);
-      S.draft = { ...guess, corresponding: guess.corresponding, keywords: ['', '', ''],
+      const { cover, guess, doc, pages } = await readPdf(file);
+      S.draft = { ...guess, keywords: ['', '', ''],
                   topic: topics()[0] || '', newTopic: !topics().length,
-                  file, cover, coverUrl: URL.createObjectURL(cover) };
+                  file, cover, coverUrl: URL.createObjectURL(cover), doc, pages };
+      if (guess.doi) {
+        $('#read-status').textContent = 'DOI found. Asking CrossRef…';
+        try { mergeCrossref(S.draft, await fromCrossref(guess.doi)); }
+        catch (err) { /* the review screen still works without it */ }
+      }
       S.step = 2; render();
     } catch (err) { $('#read-status').textContent = 'That file could not be read: ' + err.message; }
   }
@@ -605,6 +785,58 @@ document.addEventListener('click', async e => {
     status.textContent = 'Nothing was saved: ' + err.message + ' — try again.';
   }
 });
+
+/* DOI lookup and cover picking. */
+document.addEventListener('click', async e => {
+  const id = e.target.id;
+
+  if (id === 'btn-doi') {
+    collectDraft();
+    const status = $('#doi-status');
+    e.target.disabled = true;
+    status.textContent = 'Asking CrossRef…';
+    try {
+      mergeCrossref(S.draft, await fromCrossref($('#f-doi').value));
+      render();
+      const after = $('#doi-status');
+      if (after) after.textContent = 'Filled from the publisher record. Check the corresponding author.';
+    } catch (err) {
+      e.target.disabled = false;
+      status.textContent = err.message;
+    }
+  }
+
+  if (id === 'btn-pick') {
+    collectDraft();
+    S.draft.picking = true; S.draft.sel = null; S.draft.page = S.draft.page || 1;
+    render();
+  }
+
+  if (id === 'btn-crop')   { await cropCover(); }
+  if (id === 'btn-nocrop') { S.draft.picking = false; render(); }
+});
+
+/* Drag a rectangle over the rendered page. */
+let drag = null;
+document.addEventListener('pointerdown', e => {
+  if (e.target.id !== 'page-canvas' || !S.draft) return;
+  const r = e.target.getBoundingClientRect();
+  drag = { x: e.clientX - r.left, y: e.clientY - r.top };
+  S.draft.sel = { x: drag.x, y: drag.y, w: 0, h: 0 };
+  e.target.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+document.addEventListener('pointermove', e => {
+  if (!drag || !S.draft) return;
+  const c = $('#page-canvas'); if (!c) return;
+  const r = c.getBoundingClientRect();
+  const x = Math.max(0, Math.min(c.width, e.clientX - r.left));
+  const y = Math.max(0, Math.min(c.height, e.clientY - r.top));
+  S.draft.sel = { x: Math.min(drag.x, x), y: Math.min(drag.y, y),
+                  w: Math.abs(x - drag.x), h: Math.abs(y - drag.y) };
+  paintPage();
+});
+document.addEventListener('pointerup', () => { drag = null; });
 
 $('#btn-signin').onclick    = () => connect(false);
 $('#btn-reconnect').onclick = () => connect(false);

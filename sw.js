@@ -1,8 +1,8 @@
 /* Caches the app itself so SpizzaMi opens without a connection.
    Papers and covers always come from Drive and are never cached here. */
 
-const CACHE = 'spizzami-v1';
-const SHELL = ['./', './index.html', './config.js', './manifest.webmanifest',
+const CACHE = 'spizzami-v2';
+const SHELL = ['./', './index.html', './manifest.webmanifest',
                './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -18,6 +18,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
+  if (url.pathname.endsWith('config.js')) return;
   if (url.hostname.endsWith('googleapis.com') || url.hostname.endsWith('google.com')) return;
 
   e.respondWith(
