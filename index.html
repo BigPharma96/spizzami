@@ -137,7 +137,7 @@ const CACHE  = 'spizzami.index';
 
 const S = {
   token: null, client: null, folderId: null, indexId: null,
-  papers: [], view: 'library', topic: 'All', sort: 'year',
+  papers: [], deleted: [], view: 'library', topic: 'All', sort: 'year',
   openId: null, previewId: null, draft: null, step: 1
 };
 
@@ -222,27 +222,48 @@ async function download(fileId) {
 async function loadIndex() {
   const q = encodeURIComponent(`name='${INDEX}' and '${S.folderId}' in parents and trashed=false`);
   const r = await (await drive(`drive/v3/files?q=${q}&fields=files(id)`)).json();
-  if (!r.files.length) { S.indexId = null; S.papers = []; return; }
+  if (!r.files.length) { S.indexId = null; S.papers = []; S.deleted = []; return; }
   S.indexId = r.files[0].id;
   const text = await (await download(S.indexId)).text();
-  S.papers = JSON.parse(text).papers || [];
+  const data = JSON.parse(text);
+  S.papers = data.papers || [];
+  S.deleted = data.deleted || [];
   localStorage.setItem(CACHE, text);
 }
 
 /* Merge before writing, so editing on the phone does not erase what the
-   laptop saved a minute earlier. Newer edit of the same paper wins. */
+   laptop saved a minute earlier. Newer edit of the same paper wins.
+   Deletions are recorded rather than implied, otherwise a merge with a copy
+   that still holds the paper would simply bring it back. */
 async function saveIndex() {
-  let remote = [];
+  let remote = [], remoteDeleted = [];
   try {
-    if (S.indexId) remote = JSON.parse(await (await download(S.indexId)).text()).papers || [];
+    if (S.indexId) {
+      const data = JSON.parse(await (await download(S.indexId)).text());
+      remote = data.papers || [];
+      remoteDeleted = data.deleted || [];
+    }
   } catch (e) { /* first write, or offline */ }
+
+  const graves = new Map();
+  for (const g of [...remoteDeleted, ...S.deleted]) {
+    const seen = graves.get(g.id);
+    if (!seen || g.at > seen.at) graves.set(g.id, g);
+  }
+
   const merged = new Map();
   for (const p of [...remote, ...S.papers]) {
     const seen = merged.get(p.id);
     if (!seen || (p.updatedAt || '') >= (seen.updatedAt || '')) merged.set(p.id, p);
   }
+  for (const [id, g] of graves) {
+    const p = merged.get(id);
+    if (p && (p.updatedAt || '') <= g.at) merged.delete(id);
+  }
+
   S.papers = [...merged.values()];
-  const text = JSON.stringify({ version: 1, papers: S.papers }, null, 2);
+  S.deleted = [...graves.values()];
+  const text = JSON.stringify({ version: 1, papers: S.papers, deleted: S.deleted }, null, 2);
   const blob = new Blob([text], { type: 'application/json' });
   S.indexId = await upload(INDEX, blob, 'application/json', S.indexId);
   localStorage.setItem(CACHE, text);
@@ -702,10 +723,24 @@ document.addEventListener('click', async e => {
   }
 
   if (d.delete) {
-    if (!confirm('Remove this paper from the library? The files stay in your Drive folder.')) return;
+    const p = S.papers.find(x => x.id === d.delete);
+    if (!p) return;
+    if (!confirm('Delete "' + (p.title || 'this paper').slice(0, 70) +
+                 '"?\n\nThe PDF and its cover are deleted from your Drive folder as well. ' +
+                 'This cannot be undone.')) return;
+    t.disabled = true; t.textContent = 'Deleting…';
+    for (const fid of [p.pdfId, p.coverId]) {
+      if (!fid) continue;
+      try { await drive('drive/v3/files/' + fid, { method: 'DELETE' }); }
+      catch (err) { /* already gone, or never uploaded */ }
+    }
     S.papers = S.papers.filter(x => x.id !== d.delete);
-    S.openId = null;
-    await saveIndex(); S.view = 'library'; return render();
+    S.deleted.push({ id: d.delete, at: new Date().toISOString() });
+    S.openId = S.previewId = null;
+    try { await saveIndex(); }
+    catch (err) { alert('The files were deleted but the library index could not be updated: '
+                        + err.message); }
+    S.view = 'library'; return render();
   }
 });
 
@@ -842,7 +877,7 @@ $('#btn-signin').onclick    = () => connect(false);
 $('#btn-reconnect').onclick = () => connect(false);
 $('#btn-signout').onclick   = () => {
   if (S.token) google.accounts.oauth2.revoke(S.token, () => {});
-  S.token = null; S.papers = []; coverCache.clear();
+  S.token = null; S.papers = []; S.deleted = []; coverCache.clear();
   $('#app').classList.add('hidden'); $('#signin').classList.remove('hidden');
 };
 
