@@ -513,12 +513,45 @@ function renderLibrary() {
     : `<p>No papers here yet. Add one to get started.</p>`);
 }
 
+/* Sorting by a person means sorting by surname, and the field can hold a plain
+   name, an email left over from an older upload, or nothing at all. */
+const PARTICLES = ['van', 'von', 'de', 'del', 'della', 'di', 'da', 'do', 'du',
+                   'la', 'le', 'den', 'der', 'ter', 'ten', 'bin', 'al', 'st'];
+
+function surname(name) {
+  let s = String(name || '').trim();
+  if (!s) return '';
+  if (s.includes('@')) {
+    const local = s.split('@')[0];
+    const bits = local.split(/[._\-0-9]+/).filter(Boolean);
+    return (bits.length > 1 ? bits[bits.length - 1] : local).toLowerCase();
+  }
+  if (s.includes(',')) s = s.split(',')[0].trim();          // "Rossi, Marco"
+  s = s.replace(/\b[A-Z]\.(\s*)/g, ' ').replace(/\s+/g, ' ').trim();  // drop initials
+  if (!s) return String(name).trim().toLowerCase();
+  const w = s.split(' ');
+  let i = w.length - 1;
+  while (i > 0 && PARTICLES.includes(w[i - 1].toLowerCase().replace(/\./g, ''))) i--;
+  return w.slice(i).join(' ').toLowerCase();
+}
+
+/* Empty values sort last rather than landing in the middle of the alphabet. */
+function cmpText(a, b) {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return a.localeCompare(b, undefined, { sensitivity: 'base' });
+}
+
 function renderList() {
+  const byYear = (a, b) => (Number(b.year) || 0) - (Number(a.year) || 0);
+  const corr = p => surname((p.corresponding || [])[0]);
+  const jrnl = p => String(p.journal || '');
+
   const rows = [...filtered()].sort((a, b) =>
-    S.sort === 'year'    ? (b.year || 0) - (a.year || 0)
-  : S.sort === 'journal' ? String(a.journal).localeCompare(String(b.journal))
-  : String((a.corresponding || [''])[0]).split(' ').pop()
-      .localeCompare(String((b.corresponding || [''])[0]).split(' ').pop()));
+      S.sort === 'year'    ? byYear(a, b) || cmpText(jrnl(a), jrnl(b))
+    : S.sort === 'journal' ? cmpText(jrnl(a), jrnl(b)) || byYear(a, b)
+    : cmpText(corr(a), corr(b)) || byYear(a, b));
 
   return `<div class="toolbar">${topicBar()}</div>
     <div class="toolbar"><span class="caption">Sort by</span>
