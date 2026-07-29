@@ -104,7 +104,13 @@
     <p>Your paper library, synced across your devices through your own Google Drive.</p>
     <p class="note">SpizzaMi stores everything in a folder called <strong>SpizzaMi</strong> in your
       Drive. It can only see the files it created there. Nothing is sent anywhere else.</p>
-    <p style="margin-top:22px"><button class="btn" id="btn-signin">Sign in with Google</button></p>
+    <p style="margin-top:22px">
+      <label style="font-size:15px;cursor:pointer;display:inline-flex;align-items:center;gap:7px">
+        <input type="checkbox" id="remember" checked>
+        Keep me signed in on this device
+      </label>
+    </p>
+    <p><button class="btn" id="btn-signin">Sign in with Google</button></p>
     <p class="note" id="signin-status"></p>
   </div>
 </div>
@@ -157,7 +163,50 @@ const $  = (s, r = document) => r.querySelector(s);
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-/* ── Authentication ─────────────────────────────────────── */
+/* ── Authentication ─────────────────────────────────────
+   Google hands browsers a token that lasts about an hour and no refresh token,
+   so "staying signed in" means two things: reuse the token until it expires,
+   and after that ask Google again without showing anything, which works as long
+   as the person is still signed in to Google in this browser. */
+const REMEMBER = 'spizzami.remember';
+const TOKENKEY = 'spizzami.token';
+let silentAttempt = false;
+
+function remembering() {
+  const v = localStorage.getItem(REMEMBER);
+  return v === null ? true : v === '1';   // on unless turned off
+}
+
+function keepToken(token, expiresIn) {
+  if (!remembering()) return;
+  try {
+    localStorage.setItem(TOKENKEY, JSON.stringify({
+      token, exp: Date.now() + ((Number(expiresIn) || 3600) - 120) * 1000
+    }));
+  } catch (e) { /* storage full or blocked */ }
+}
+
+function storedToken() {
+  try {
+    const j = JSON.parse(localStorage.getItem(TOKENKEY) || 'null');
+    if (j && j.token && j.exp > Date.now()) return j.token;
+  } catch (e) { /* corrupt entry */ }
+  return null;
+}
+
+function forgetToken() { try { localStorage.removeItem(TOKENKEY); } catch (e) {} }
+
+function authFailed(reason, wasSilent) {
+  const inApp = !$('#app').classList.contains('hidden');
+  $('#btn-signin').disabled = false;
+  if (inApp) { $('#reconnect').classList.remove('hidden'); return; }
+  $('#app').classList.add('hidden');
+  $('#signin').classList.remove('hidden');
+  $('#signin-status').textContent = wasSilent
+    ? 'The saved session has ended. Sign in once more.'
+    : 'Google refused the request: ' + reason;
+}
+
 function initAuth() {
   if (!window.CLIENT_ID || CLIENT_ID.startsWith('PASTE')) {
     $('#signin-status').textContent =
@@ -169,24 +218,40 @@ function initAuth() {
     client_id: CLIENT_ID,
     scope: SCOPE,
     callback: r => {
-      if (r.error) { $('#signin-status').textContent = 'Google refused the request: ' + r.error; return; }
+      const wasSilent = silentAttempt; silentAttempt = false;
+      if (r.error) { authFailed(r.error, wasSilent); return; }
       S.token = r.access_token;
+      keepToken(r.access_token, r.expires_in);
       $('#reconnect').classList.add('hidden');
       start();
+    },
+    error_callback: err => {
+      const wasSilent = silentAttempt; silentAttempt = false;
+      authFailed((err && err.type) || 'the sign-in window closed', wasSilent);
     }
   });
   $('#btn-signin').disabled = false;
+  $('#remember').checked = remembering();
+
+  if (!remembering()) return;
+  const saved = storedToken();
+  if (saved) { S.token = saved; start(); return; }
+  if (!localStorage.getItem(TOKENKEY)) return;   // never signed in here before
+  $('#signin-status').textContent = 'Signing you in…';
+  connect(true);
 }
 
 function connect(silent) {
   if (!S.client) return;
+  silentAttempt = !!silent;
   S.client.requestAccessToken(silent ? { prompt: '' } : {});
 }
 
-/* Access tokens last about an hour. Google asks that renewal be triggered by
-   the user, so we try silently once and otherwise surface a Reconnect button. */
+/* An expired token is worth one quiet retry before bothering the person. */
 function expired() {
   S.token = null;
+  forgetToken();
+  if (remembering() && !silentAttempt) { connect(true); return; }
   $('#reconnect').classList.remove('hidden');
 }
 
@@ -1010,9 +1075,17 @@ document.addEventListener('pointerup', () => { drag = null; });
 
 $('#btn-signin').onclick    = () => connect(false);
 $('#btn-reconnect').onclick = () => connect(false);
+$('#remember').onchange = e => {
+  localStorage.setItem(REMEMBER, e.target.checked ? '1' : '0');
+  if (!e.target.checked) forgetToken();
+};
 $('#btn-signout').onclick   = () => {
   if (S.token) google.accounts.oauth2.revoke(S.token, () => {});
+  forgetToken();
+  localStorage.setItem(REMEMBER, '0');
+  const box = $('#remember'); if (box) box.checked = false;
   S.token = null; S.papers = []; S.deleted = []; coverCache.clear();
+  $('#signin-status').textContent = '';
   $('#app').classList.add('hidden'); $('#signin').classList.remove('hidden');
 };
 
