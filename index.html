@@ -468,7 +468,54 @@ function guessMetadata(items, text, pageHeight) {
   }
 
   return { title, year: year || '', doi, emails, abstract, journal: '', firstAuthor: '',
-           corresponding: emails.length ? emails[0] : '' };
+           corresponding: correspondingFrom(text, []) };
+}
+
+/* Publishers mark the corresponding author in a handful of ways: an asterisk on
+   the name in the author line (Angewandte), or an explicit block such as
+   "Correspondence: Name (email)" (ChemCatChem). An address is never the answer
+   on its own — at most it points at which author to name. */
+function correspondingFrom(text, authors) {
+  const t = String(text || '');
+  const list = (authors || []).filter(Boolean);
+
+  /* Prefer the publisher's own spelling of the name when we can match it. */
+  const resolve = frag => {
+    const f = String(frag || '').trim();
+    if (!f) return '';
+    const low = f.toLowerCase();
+    const hit = list.find(a => {
+      const s = surname(a);
+      return s && (low.includes(s) || s.includes(low));
+    });
+    return hit || f;
+  };
+
+  const m = t.match(/Correspond(?:ence|ing\s+author)s?\s*(?:to)?\s*[:\u2013-]\s*([^()<\n;]{3,70})/i);
+  if (m) {
+    const name = m[1].replace(/\b(?:e-?mail|address)\b.*$/i, '')
+                     .replace(/[,;]\s*$/, '').trim();
+    const got = resolve(name);
+    if (got) return got;
+  }
+
+  const head = t.slice(0, 1600);
+  for (const a of list) {
+    const s = surname(a);
+    if (!s) continue;
+    const re = new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[*\\u2217\\u066D]', 'i');
+    if (re.test(head)) return a;
+  }
+
+  for (const e of (t.match(/[\w.+-]+@[\w-]+\.[\w.]{2,}/g) || [])) {
+    const bits = e.split('@')[0].toLowerCase().split(/[._\-0-9+]+/).filter(b => b.length > 2);
+    const hit = list.find(a => {
+      const s = surname(a);
+      return s && bits.some(b => s.startsWith(b) || b.startsWith(s));
+    });
+    if (hit) return hit;
+  }
+  return '';
 }
 
 /* A paper is full of years — copyright lines, reference lists, submission dates.
@@ -547,7 +594,14 @@ function mergeCrossref(draft, cr) {
   }
   if (cr.abstract && cr.abstract.length > (draft.abstract || '').length) draft.abstract = cr.abstract;
   draft.authors = cr.authors || [];
-  if (!draft.corresponding && cr.authors && cr.authors.length) {
+
+  /* With the author list in hand the markings in the PDF become readable. */
+  const named = correspondingFrom(draft.raw || '', cr.authors);
+  if (named) {
+    draft.corresponding = named;
+    draft.correspondingGuessed = false;
+  } else if ((!draft.corresponding || draft.corresponding.includes('@')) &&
+             cr.authors && cr.authors.length) {
     draft.corresponding = cr.authors[cr.authors.length - 1];
     draft.correspondingGuessed = true;
   }
@@ -945,8 +999,8 @@ document.addEventListener('change', async e => {
     if (!file) return;
     $('#read-status').textContent = 'Reading the PDF…';
     try {
-      const { cover, guess, doc, pages } = await readPdf(file);
-      S.draft = { ...guess, keywords: ['', '', ''],
+      const { cover, guess, doc, pages, raw } = await readPdf(file);
+      S.draft = { ...guess, keywords: ['', '', ''], raw,
                   topic: topics()[0] || '', newTopic: !topics().length,
                   file, cover, coverUrl: URL.createObjectURL(cover), doc, pages };
       if (guess.doi) {
