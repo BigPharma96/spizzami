@@ -86,6 +86,12 @@
                  display:flex;align-items:center;border-left:1px solid var(--rule-soft)}
   .search button:hover{background:#EDEDEA}
   .search:focus-within{outline:2px solid #000;outline-offset:2px}
+  .dropzone{border:2px dashed var(--rule);padding:40px 20px;text-align:center;cursor:pointer;
+            margin:16px 0;font-size:16px;color:var(--muted);background:transparent;
+            transition:border-color 120ms,background 120ms,color 120ms}
+  .dropzone:hover{border-color:#8A8A87;background:#E3E3E0;color:#000}
+  .dropzone.over{border-color:#000;background:#DEDEDB;color:#000}
+  .dropzone .big{display:block;font-size:18px;margin-bottom:4px}
   .kwpanel{background:var(--panel);border:1px solid var(--rule);padding:10px 12px;margin-bottom:16px}
   .kwbox{display:inline-block;font-size:13px;margin:0 14px 6px 0;cursor:pointer;white-space:nowrap}
   .kwbox input{margin-right:4px;vertical-align:middle}
@@ -154,9 +160,9 @@
 
 /* Bump these two together on every release.
    Minor fix → 2.1, 2.2 …   Larger change → 3.0 */
-const VERSION = '2.0';
-const WHATS_NEW = 'improved recognition of corresponding authors in Wiley papers, ' +
-                  'keyword filtering, library search, and a sign-in that is remembered';
+const VERSION = '2.1';
+const WHATS_NEW = 'papers can now be added by dragging a PDF onto the page, ' +
+                  'and the version number is shown next to the name';
 
 const SCOPE  = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER = 'SpizzaMi';
@@ -815,11 +821,18 @@ function renderAdd() {
       `<span class="${step === i + 1 ? 'on' : ''}">${i + 1}. ${t}</span>`).join('')}
   </div>`;
 
-  if (step === 1) return head + `<div class="narrow">
-    <p>Choose the PDF. SpizzaMi reads the title, year, abstract and cover from the file itself,
-       and you correct whatever it got wrong before saving.</p>
-    <input type="file" accept="application/pdf" id="pdf-input" />
-    <p id="read-status" class="spinner"></p></div>`;
+  if (step === 1) return head + `
+    <div class="narrow">
+      <p>Choose the PDF. SpizzaMi reads the title, year, abstract and cover from the file itself,
+         and you correct whatever it got wrong before saving.</p>
+      <input type="file" accept="application/pdf" id="pdf-input" />
+    </div>
+    <div class="dropzone" id="dropzone" tabindex="0" role="button"
+         aria-label="Drop a PDF here, or click to choose a file">
+      <span class="big">Drop a PDF here</span>
+      <span>or click to choose one from your device</span>
+    </div>
+    <p id="read-status" class="spinner"></p>`;
 
   if (step === 2) return head + `<div class="narrow">
     <span class="label">Topic</span>
@@ -988,6 +1001,44 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.matches('[data-open],[data-preview]')) e.target.click();
 });
 
+/* Drop zone. Dropping outside it must not make the browser open the PDF
+   and throw the person out of the app, so the window swallows those too. */
+['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => {
+  e.preventDefault();
+  const z = e.target.closest && e.target.closest('#dropzone');
+  if (z) z.classList.add('over');
+}));
+
+document.addEventListener('dragleave', e => {
+  const z = e.target.closest && e.target.closest('#dropzone');
+  if (z && !z.contains(e.relatedTarget)) z.classList.remove('over');
+});
+
+document.addEventListener('drop', async e => {
+  e.preventDefault();
+  const z = e.target.closest && e.target.closest('#dropzone');
+  if (z) z.classList.remove('over');
+  if (!z) return;
+  const dt = e.dataTransfer;
+  const file = dt && dt.files && dt.files[0];
+  await handlePdfFile(file);
+});
+
+document.addEventListener('click', e => {
+  if (e.target.closest && e.target.closest('#dropzone')) {
+    const input = $('#pdf-input');
+    if (input) input.click();
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.id === 'dropzone') {
+    e.preventDefault();
+    const input = $('#pdf-input');
+    if (input) input.click();
+  }
+});
+
 /* Typing rebuilds the view, so put the caret back where the person left it. */
 document.addEventListener('input', e => {
   if (e.target.id !== 'search') return;
@@ -998,6 +1049,31 @@ document.addEventListener('input', e => {
   if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (_) {} }
 });
 
+/* One path for both the file button and the drop zone. */
+async function handlePdfFile(file) {
+  const status = () => $('#read-status');
+  if (!file) return;
+  if (!/pdf/i.test(file.type || '') && !/\.pdf$/i.test(file.name || '')) {
+    if (status()) status().textContent = 'That file is not a PDF.';
+    return;
+  }
+  if (status()) status().textContent = 'Reading the PDF…';
+  try {
+    const { cover, guess, doc, pages, raw } = await readPdf(file);
+    S.draft = { ...guess, keywords: ['', '', ''], raw,
+                topic: topics()[0] || '', newTopic: !topics().length,
+                file, cover, coverUrl: URL.createObjectURL(cover), doc, pages };
+    if (guess.doi) {
+      if (status()) status().textContent = 'DOI found. Asking CrossRef…';
+      try { mergeCrossref(S.draft, await fromCrossref(guess.doi)); }
+      catch (err) { /* the review screen still works without it */ }
+    }
+    S.step = 2; render();
+  } catch (err) {
+    if (status()) status().textContent = 'That file could not be read: ' + err.message;
+  }
+}
+
 document.addEventListener('change', async e => {
   if (e.target.classList && e.target.classList.contains('kw-check')) {
     const k = e.target.dataset.kw;
@@ -1005,23 +1081,7 @@ document.addEventListener('change', async e => {
     return render();
   }
 
-  if (e.target.id === 'pdf-input') {
-    const file = e.target.files[0];
-    if (!file) return;
-    $('#read-status').textContent = 'Reading the PDF…';
-    try {
-      const { cover, guess, doc, pages, raw } = await readPdf(file);
-      S.draft = { ...guess, keywords: ['', '', ''], raw,
-                  topic: topics()[0] || '', newTopic: !topics().length,
-                  file, cover, coverUrl: URL.createObjectURL(cover), doc, pages };
-      if (guess.doi) {
-        $('#read-status').textContent = 'DOI found. Asking CrossRef…';
-        try { mergeCrossref(S.draft, await fromCrossref(guess.doi)); }
-        catch (err) { /* the review screen still works without it */ }
-      }
-      S.step = 2; render();
-    } catch (err) { $('#read-status').textContent = 'That file could not be read: ' + err.message; }
-  }
+  if (e.target.id === 'pdf-input') { await handlePdfFile(e.target.files[0]); }
 
   if (e.target.id === 'cover-input') {
     const img = e.target.files[0];
