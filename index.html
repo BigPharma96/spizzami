@@ -36,8 +36,9 @@
   .row{margin-bottom:14px}
 
   header{border-bottom:1px solid var(--rule);background:#E2E2DF;padding:14px 20px;
-         display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+         display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
   .wordmark{font-size:24px;letter-spacing:-.01em}
+  .wordmark .ver{font-size:.62em;letter-spacing:0}
   nav{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
   main{padding:24px 20px 64px;max-width:1180px;margin:0 auto}
 
@@ -99,7 +100,7 @@
 <!-- ══ Sign in ══ -->
 <div id="signin" class="center">
   <div style="width:100%;max-width:400px">
-    <h1 class="wordmark" style="font-size:40px;margin:0">SpizzaMi</h1>
+    <h1 class="wordmark" id="wm-login" style="font-size:40px;margin:0">SpizzaMi</h1>
     <div class="hairline"></div>
     <p>Your paper library, synced across your devices through your own Google Drive.</p>
     <p class="note">SpizzaMi stores everything in a folder called <strong>SpizzaMi</strong> in your
@@ -111,6 +112,7 @@
       </label>
     </p>
     <p><button class="btn" id="btn-signin">Sign in with Google</button></p>
+    <p class="note" id="news-login"></p>
     <p class="note" id="signin-status"></p>
   </div>
 </div>
@@ -118,7 +120,10 @@
 <!-- ══ App ══ -->
 <div id="app" class="hidden">
   <header>
-    <span class="wordmark">SpizzaMi</span>
+    <div>
+      <span class="wordmark" id="wm-app">SpizzaMi</span>
+      <div class="note" id="news-app" style="margin-top:2px"></div>
+    </div>
     <nav>
       <button class="btn ghost" data-view="library">Library</button>
       <button class="btn ghost" data-view="list">List</button>
@@ -146,6 +151,12 @@
      <id>.pdf       the paper itself
      <id>.jpg       the cover taken from page 1
    ═══════════════════════════════════════════════════════════ */
+
+/* Bump these two together on every release.
+   Minor fix → 2.1, 2.2 …   Larger change → 3.0 */
+const VERSION = '2.0';
+const WHATS_NEW = 'improved recognition of corresponding authors in Wiley papers, ' +
+                  'keyword filtering, library search, and a sign-in that is remembered';
 
 const SCOPE  = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER = 'SpizzaMi';
@@ -1160,6 +1171,12 @@ async function start() {
 }
 
 window.onload = () => {
+  const mark = `SpizzaMi <span class="ver">_${VERSION}</span>`;
+  $('#wm-login').innerHTML = mark;
+  $('#wm-app').innerHTML = mark;
+  $('#news-login').textContent = '*' + WHATS_NEW;
+  $('#news-app').textContent = '*' + WHATS_NEW;
+
   const wait = setInterval(() => {
     if (window.google && google.accounts) { clearInterval(wait); initAuth(); }
   }, 100);
