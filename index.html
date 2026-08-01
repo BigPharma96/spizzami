@@ -86,6 +86,10 @@
                  display:flex;align-items:center;border-left:1px solid var(--rule-soft)}
   .search button:hover{background:#EDEDEA}
   .search:focus-within{outline:2px solid #000;outline-offset:2px}
+  .btn.filter{border-color:#3E5148;background:#3E5148}
+  .btn.filter:hover{background:#2C3A34}
+  .btn.filter.ghost{background:transparent;color:#2C3A34;border-color:#7C8C84}
+  .btn.filter.ghost:hover{background:#DCE2DE}
   .dropzone{border:2px dashed var(--rule);padding:40px 20px;text-align:center;cursor:pointer;
             margin:16px 0;font-size:16px;color:var(--muted);background:transparent;
             transition:border-color 120ms,background 120ms,color 120ms}
@@ -162,7 +166,7 @@
 /* Bump these two together on every release.
    Minor fix → 2.1, 2.2 …   Larger change → 3.0 */
 const VERSION = '2.2';
-const WHATS_NEW = 'a Recently added section for the last seven days, sorting by upload date, ' +
+const WHATS_NEW = 'a Recently added section, a filter by date added, sorting by upload date, ' +
                   'and arrows that show and reverse the sort order';
 
 const SCOPE  = 'https://www.googleapis.com/auth/drive.file';
@@ -174,6 +178,7 @@ const S = {
   token: null, client: null, folderId: null, indexId: null,
   papers: [], deleted: [], view: 'library', topic: 'All', sort: 'year',
   query: '', kwOff: new Set(), kwOpen: false, desc: true,
+  since: 'all', sinceOpen: false,
   openId: null, previewId: null, draft: null, step: 1
 };
 
@@ -636,10 +641,30 @@ function keywordsInScope() {
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
 
-function filtering() { return S.kwOff.size > 0 || S.query.trim().length > 0; }
+/* Windows are exclusive, so this is a single choice rather than a set. */
+const SINCE = [['3d', 'Last 3 days', 3], ['7d', 'Last 7 days', 7],
+               ['1m', 'Last month', 30], ['1y', 'Last year', 365], ['all', 'All', null]];
+
+function sinceLabel() {
+  const hit = SINCE.find(s => s[0] === S.since);
+  return hit ? hit[1] : 'All';
+}
+
+function filtering() {
+  return S.kwOff.size > 0 || S.query.trim().length > 0 || S.since !== 'all';
+}
 
 function filtered() {
   let list = S.topic === 'All' ? S.papers : S.papers.filter(p => p.topic === S.topic);
+
+  const days = (SINCE.find(s => s[0] === S.since) || [])[2];
+  if (days) {
+    const cut = Date.now() - days * 24 * 60 * 60 * 1000;
+    list = list.filter(p => {
+      const t = Date.parse(addedOn(p));
+      return !isNaN(t) && t >= cut;
+    });
+  }
 
   /* A paper survives if it still carries at least one selected keyword.
      Papers with no keywords at all only show when nothing is deselected. */
@@ -675,14 +700,21 @@ function filterBar() {
       </span>
       <span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
         ${filtering() ? `<button class="btn ghost" id="btn-clear">Clear filters</button>` : ''}
-        <button class="btn ${S.kwOpen ? '' : 'ghost'}" id="btn-kw">Keywords${
+        <button class="btn filter ${S.kwOpen ? '' : 'ghost'}" id="btn-kw">Keywords${
           S.kwOff.size ? ` (${on}/${all.length})` : ''}</button>
+        <button class="btn filter ${S.sinceOpen ? '' : 'ghost'}" id="btn-since">Added${
+          S.since !== 'all' ? `: ${sinceLabel().toLowerCase()}` : ''}</button>
       </span>
     </div>
+    ${S.sinceOpen ? `<div class="kwpanel">
+      ${SINCE.map(([k, label]) => `<label class="kwbox"><input type="radio" name="since"
+        class="since-radio" data-since="${k}" ${S.since === k ? 'checked' : ''}>${label}</label>`).join('')}
+      <p class="note" style="margin:8px 0 0">Based on when the paper was added to SpizzaMi.</p>
+    </div>` : ''}
     ${S.kwOpen ? `<div class="kwpanel">
       <div style="margin-bottom:8px">
-        <button class="btn ghost" id="kw-all">Select all</button>
-        <button class="btn ghost" id="kw-none">Deselect all</button>
+        <button class="btn filter ghost" id="kw-all">Select all</button>
+        <button class="btn filter ghost" id="kw-none">Deselect all</button>
       </div>
       ${all.length
         ? all.map(k => `<label class="kwbox"><input type="checkbox" class="kw-check"
@@ -1133,6 +1165,11 @@ document.addEventListener('change', async e => {
     return render();
   }
 
+  if (e.target.classList && e.target.classList.contains('since-radio')) {
+    S.since = e.target.dataset.since;
+    return render();
+  }
+
   if (e.target.id === 'pdf-input') { await handlePdfFile(e.target.files[0]); }
 
   if (e.target.id === 'cover-input') {
@@ -1211,14 +1248,15 @@ document.addEventListener('click', async e => {
     }
   }
 
-  if (id === 'btn-kw')    { S.kwOpen = !S.kwOpen; render(); }
+  if (id === 'btn-kw')    { S.kwOpen = !S.kwOpen; if (S.kwOpen) S.sinceOpen = false; render(); }
+  if (id === 'btn-since') { S.sinceOpen = !S.sinceOpen; if (S.sinceOpen) S.kwOpen = false; render(); }
   if (e.target.closest && e.target.closest('#btn-search')) {
     const el = $('#search');
     if (el) { S.query = el.value; render(); const n = $('#search'); if (n) n.focus(); }
   }
   if (id === 'kw-all')    { S.kwOff.clear(); render(); }
   if (id === 'kw-none')   { S.kwOff = new Set(keywordsInScope()); render(); }
-  if (id === 'btn-clear') { S.query = ''; S.kwOff.clear(); render(); }
+  if (id === 'btn-clear') { S.query = ''; S.kwOff.clear(); S.since = 'all'; render(); }
 
   if (id === 'btn-pick') {
     collectDraft();
