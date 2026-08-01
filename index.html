@@ -132,6 +132,7 @@
     </div>
     <nav>
       <button class="btn ghost" data-view="library">Library</button>
+      <button class="btn ghost" data-view="recent">Recently added</button>
       <button class="btn ghost" data-view="list">List</button>
       <button class="btn ghost" data-view="add">Add paper</button>
       <button class="btn ghost" id="btn-signout">Sign out</button>
@@ -160,9 +161,9 @@
 
 /* Bump these two together on every release.
    Minor fix → 2.1, 2.2 …   Larger change → 3.0 */
-const VERSION = '2.1';
-const WHATS_NEW = 'papers can now be added by dragging a PDF onto the page, ' +
-                  'and the version number is shown next to the name';
+const VERSION = '2.2';
+const WHATS_NEW = 'a Recently added section for the last seven days, sorting by upload date, ' +
+                  'and arrows that show and reverse the sort order';
 
 const SCOPE  = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER = 'SpizzaMi';
@@ -172,7 +173,7 @@ const CACHE  = 'spizzami.index';
 const S = {
   token: null, client: null, folderId: null, indexId: null,
   papers: [], deleted: [], view: 'library', topic: 'All', sort: 'year',
-  query: '', kwOff: new Set(), kwOpen: false,
+  query: '', kwOff: new Set(), kwOpen: false, desc: true,
   openId: null, previewId: null, draft: null, step: 1
 };
 
@@ -755,30 +756,78 @@ function cmpText(a, b) {
   return a.localeCompare(b, undefined, { sensitivity: 'base' });
 }
 
-function renderList() {
-  const byYear = (a, b) => (Number(b.year) || 0) - (Number(a.year) || 0);
-  const corr = p => surname((p.corresponding || [])[0]);
-  const jrnl = p => String(p.journal || '');
+/* When a paper entered the library, as opposed to when it was last edited. */
+function addedOn(p) { return p.addedAt || p.updatedAt || ''; }
 
-  const rows = [...filtered()].sort((a, b) =>
-      S.sort === 'year'    ? byYear(a, b) || cmpText(jrnl(a), jrnl(b))
-    : S.sort === 'journal' ? cmpText(jrnl(a), jrnl(b)) || byYear(a, b)
-    : cmpText(corr(a), corr(b)) || byYear(a, b));
+function sortKey(p) {
+  switch (S.sort) {
+    case 'year':     return Number(p.year) || 0;
+    case 'journal':  return String(p.journal || '');
+    case 'added':    return addedOn(p);
+    default:         return surname((p.corresponding || [])[0]);
+  }
+}
+
+/* One direction flag for every criterion: descending means newest or Z first. */
+function compare(a, b) {
+  const ka = sortKey(a), kb = sortKey(b);
+  let r;
+  if (typeof ka === 'number' && typeof kb === 'number') r = ka - kb;
+  else r = cmpText(String(ka), String(kb));
+  if (r === 0) r = (Number(a.year) || 0) - (Number(b.year) || 0);
+  return S.desc ? -r : r;
+}
+
+function arrow() {
+  return `<svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"
+    style="margin-left:5px;vertical-align:baseline">
+    <path d="${S.desc ? 'M5 9 L5 1 M2 4 L5 1 L8 4' : 'M5 1 L5 9 M2 6 L5 9 L8 6'}"
+      stroke="currentColor" stroke-width="1.5" fill="none"
+      stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+const SORTS = [['year', 'year'], ['journal', 'journal'],
+               ['corresponding', 'corresponding'], ['added', 'date added']];
+
+function renderList() {
+  const rows = [...filtered()].sort(compare);
 
   return `<div class="toolbar">${topicBar()}</div>` + filterBar() +
     `<div class="toolbar"><span class="caption">Sort by</span>
-      ${['year', 'journal', 'corresponding'].map(s =>
-        `<button class="btn ${s === S.sort ? '' : 'ghost'}" data-sort="${s}">${s}</button>`).join('')}
+      ${SORTS.map(([s, label]) =>
+        `<button class="btn ${s === S.sort ? '' : 'ghost'}" data-sort="${s}">${label}${
+          s === S.sort ? arrow() : ''}</button>`).join('')}
     </div>
     <div class="scroll"><table>
-      <thead><tr><th>First author</th><th>Corresponding author</th><th>Journal</th><th>Year</th></tr></thead>
+      <thead><tr><th>First author</th><th>Corresponding author</th><th>Journal</th><th>Year</th>${
+        S.sort === 'added' ? '<th>Added</th>' : ''}</tr></thead>
       <tbody>${rows.map(p => `<tr data-preview="${p.id}" tabindex="0">
         <td>${esc(p.firstAuthor)}</td>
         <td>${esc((p.corresponding || []).join(', '))}</td>
         <td class="journal">${esc(p.journal)}</td>
-        <td>${esc(p.year)}</td></tr>`).join('')}
+        <td>${esc(p.year)}</td>${
+        S.sort === 'added' ? `<td>${esc(shortDate(addedOn(p)))}</td>` : ''}</tr>`).join('')}
       </tbody></table></div>
     <p class="note">Tap a row to see the card with its graphical abstract.</p>`;
+}
+
+function shortDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d) ? '—' : d.toLocaleDateString(undefined,
+    { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/* Papers added in the last seven days, newest first. */
+function renderRecent() {
+  const cut = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const list = filtered()
+    .filter(p => { const t = Date.parse(addedOn(p)); return !isNaN(t) && t >= cut; })
+    .sort((a, b) => addedOn(b).localeCompare(addedOn(a)));
+
+  return `<div class="toolbar">${topicBar()}</div>` + filterBar() + (list.length
+    ? `<div class="grid">${list.map(cardHtml).join('')}</div>`
+    : `<p>Nothing was added in the last seven days.</p>`);
 }
 
 function renderPreview() {
@@ -908,6 +957,7 @@ function render() {
       S.openId    ? renderPaper()
     : S.previewId ? renderPreview()
     : S.view === 'library' ? renderLibrary()
+    : S.view === 'recent'  ? renderRecent()
     : S.view === 'list'    ? renderList()
     : renderAdd();
 
@@ -941,7 +991,9 @@ document.addEventListener('click', async e => {
   if (d.view)    { S.view = d.view; S.openId = S.previewId = null;
                    if (d.view === 'add') { S.draft = null; S.step = 1; } return render(); }
   if (d.topic)   { S.topic = d.topic; return render(); }
-  if (d.sort)    { S.sort = d.sort; return render(); }
+  if (d.sort)    { if (d.sort === S.sort) S.desc = !S.desc;
+                   else { S.sort = d.sort; S.desc = true; }
+                   return render(); }
   if (d.open)    { S.openId = d.open; return render(); }
   if (d.preview) { S.previewId = d.preview; return render(); }
   if (d.back)    { if (d.back === 'library') { S.openId = S.previewId = null; S.view = 'library'; }
@@ -1125,7 +1177,9 @@ document.addEventListener('click', async e => {
       corresponding: d.corresponding.split(',').map(s => s.trim()).filter(Boolean),
       authors: d.authors || [],
       keywords: d.keywords.filter(Boolean), abstract: d.abstract.trim(), doi: (d.doi || '').trim(),
-      pdfId, coverId, updatedAt: new Date().toISOString()
+      pdfId, coverId,
+      addedAt: d.addedAt || (d.editing ? undefined : new Date().toISOString()),
+      updatedAt: new Date().toISOString()
     };
     S.papers = [paper, ...S.papers.filter(p => p.id !== id)];
     status.textContent = 'Updating the library…';
