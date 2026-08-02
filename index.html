@@ -165,9 +165,9 @@
 
 /* Bump these two together on every release.
    Minor fix → 2.1, 2.2 …   Larger change → 3.0 */
-const VERSION = '2.2';
-const WHATS_NEW = 'a Recently added section, a filter by date added, sorting by upload date, ' +
-                  'and arrows that show and reverse the sort order';
+const VERSION = '2.5';
+const WHATS_NEW = 'several PDFs can be added in one go, duplicates are skipped automatically, ' +
+                  'and the cover can be changed after a paper is saved';
 
 const SCOPE  = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER = 'SpizzaMi';
@@ -178,7 +178,7 @@ const S = {
   token: null, client: null, folderId: null, indexId: null,
   papers: [], deleted: [], view: 'library', topic: 'All', sort: 'year',
   query: '', kwOff: new Set(), kwOpen: false, desc: true,
-  since: 'all', sinceOpen: false,
+  since: 'all', sinceOpen: false, queue: [], skipped: [],
   openId: null, previewId: null, draft: null, step: 1
 };
 
@@ -900,20 +900,30 @@ function renderAdd() {
   const head = `<div class="steps">
     ${['File', 'Topic and keywords', 'Review and correct'].map((t, i) =>
       `<span class="${step === i + 1 ? 'on' : ''}">${i + 1}. ${t}</span>`).join('')}
+    ${S.queue.length ? `<span style="margin-left:auto;color:var(--muted)">${
+      S.queue.length} more file${S.queue.length > 1 ? 's' : ''} waiting</span>` : ''}
   </div>`;
 
   if (step === 1) return head + `
     <div class="narrow">
-      <p>Choose the PDF. SpizzaMi reads the title, year, abstract and cover from the file itself,
-         and you correct whatever it got wrong before saving.</p>
-      <input type="file" accept="application/pdf" id="pdf-input" />
+      <p>Choose one or more PDFs. SpizzaMi reads the title, year, abstract and cover from each
+         file, and you correct whatever it got wrong before saving.</p>
+      <input type="file" accept="application/pdf" id="pdf-input" multiple />
     </div>
     <div class="dropzone" id="dropzone" tabindex="0" role="button"
-         aria-label="Drop a PDF here, or click to choose a file">
-      <span class="big">Drop a PDF here</span>
-      <span>or click to choose one from your device</span>
+         aria-label="Drop PDFs here, or click to choose files">
+      <span class="big">Drop PDFs here</span>
+      <span>or click to choose them from your device</span>
     </div>
-    <p id="read-status" class="spinner"></p>`;
+    <p id="read-status" class="spinner"></p>
+    ${S.skipped.length ? `<div class="banner" style="display:block">
+      <strong>${S.skipped.length} file${S.skipped.length > 1 ? 's' : ''} skipped —
+        already in your library</strong>
+      <ul style="margin:6px 0 0 18px;padding:0;font-size:14px">
+        ${S.skipped.map(s => `<li>${esc(s.name)} &mdash; ${
+          esc((s.title || 'already saved').slice(0, 70))}${
+          s.year ? ' (' + esc(s.year) + ')' : ''}</li>`).join('')}
+      </ul></div>` : ''}`;
 
   if (step === 2) return head + `<div class="narrow">
     <span class="label">Topic</span>
@@ -997,6 +1007,10 @@ function render() {
     b.classList.toggle('ghost', !(b.dataset.view === S.view && !S.openId && !S.previewId)));
 
   if (S.draft && S.draft.coverUrl) { const i = $('#draft-cover'); if (i) i.src = S.draft.coverUrl; }
+  else if (S.draft && S.draft.coverId) {
+    const i = $('#draft-cover');
+    if (i) { i.dataset.cover = S.draft.coverId; showCover(i); }
+  }
   if (S.draft && S.draft.picking) showPage(S.draft.page || 1);
   document.querySelectorAll('img[data-cover]').forEach(showCover);
 }
@@ -1104,8 +1118,7 @@ document.addEventListener('drop', async e => {
   if (z) z.classList.remove('over');
   if (!z) return;
   const dt = e.dataTransfer;
-  const file = dt && dt.files && dt.files[0];
-  await handlePdfFile(file);
+  if (dt && dt.files && dt.files.length) await queueFiles(dt.files);
 });
 
 document.addEventListener('click', e => {
@@ -1133,6 +1146,40 @@ document.addEventListener('input', e => {
   if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (_) {} }
 });
 
+/* A duplicate is refused outright, so the test has to be strict: a DOI match is
+   proof, while a title match alone is not — two papers can share a title and be
+   different work, so the year or the first author has to agree as well. */
+function findDuplicate(doi, title, year, firstAuthor, ignoreId) {
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const d = norm(doi), t = norm(title), y = String(year || '').trim();
+  const fa = surname(firstAuthor);
+  return S.papers.find(p => {
+    if (p.id === ignoreId) return false;
+    if (d && norm(p.doi) === d) return true;
+    if (t.length > 20 && norm(p.title) === t) {
+      const sameYear = y && String(p.year || '').trim() === y;
+      const sameAuthor = fa && surname(p.firstAuthor) === fa;
+      return !!(sameYear || sameAuthor);
+    }
+    return false;
+  }) || null;
+}
+
+/* Files chosen together are handled one after another: the person reviews and
+   saves one paper, then the next opens by itself. */
+async function queueFiles(files) {
+  const pdfs = [...files].filter(f =>
+    /pdf/i.test(f.type || '') || /\.pdf$/i.test(f.name || ''));
+  if (!pdfs.length) {
+    const s = $('#read-status');
+    if (s) s.textContent = 'No PDF among those files.';
+    return;
+  }
+  S.queue = pdfs.slice(1);
+  S.skipped = [];
+  await handlePdfFile(pdfs[0]);
+}
+
 /* One path for both the file button and the drop zone. */
 async function handlePdfFile(file) {
   const status = () => $('#read-status');
@@ -1152,6 +1199,15 @@ async function handlePdfFile(file) {
       try { mergeCrossref(S.draft, await fromCrossref(guess.doi)); }
       catch (err) { /* the review screen still works without it */ }
     }
+    const dup = findDuplicate(S.draft.doi, S.draft.title, S.draft.year,
+                              S.draft.firstAuthor, null);
+    if (dup) {
+      S.skipped.push({ name: file.name, title: dup.title, year: dup.year });
+      S.draft = null;
+      if (S.queue.length) return handlePdfFile(S.queue.shift());
+      S.step = 1; render();
+      return;
+    }
     S.step = 2; render();
   } catch (err) {
     if (status()) status().textContent = 'That file could not be read: ' + err.message;
@@ -1170,7 +1226,7 @@ document.addEventListener('change', async e => {
     return render();
   }
 
-  if (e.target.id === 'pdf-input') { await handlePdfFile(e.target.files[0]); }
+  if (e.target.id === 'pdf-input') { await queueFiles(e.target.files); }
 
   if (e.target.id === 'cover-input') {
     const img = e.target.files[0];
@@ -1205,8 +1261,12 @@ document.addEventListener('click', async e => {
   try {
     const id = d.editing || (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
     let pdfId = d.pdfId, coverId = d.coverId;
-    if (d.file)  { status.textContent = 'Uploading the PDF…'; pdfId = await upload(id + '.pdf', d.file, 'application/pdf'); }
-    if (d.cover) { status.textContent = 'Uploading the cover…'; coverId = await upload(id + '.jpg', d.cover, 'image/jpeg'); }
+    if (d.file)  { status.textContent = 'Uploading the PDF…'; pdfId = await upload(id + '.pdf', d.file, 'application/pdf', d.editing ? d.pdfId : null); }
+    if (d.cover) {
+      status.textContent = 'Uploading the cover…';
+      coverId = await upload(id + '.jpg', d.cover, 'image/jpeg', d.editing ? d.coverId : null);
+      if (coverCache.has(coverId)) { URL.revokeObjectURL(coverCache.get(coverId)); coverCache.delete(coverId); }
+    }
 
     const paper = {
       id, topic: d.topic || 'Unsorted', title: d.title.trim(), journal: d.journal.trim(),
@@ -1221,7 +1281,9 @@ document.addEventListener('click', async e => {
     S.papers = [paper, ...S.papers.filter(p => p.id !== id)];
     status.textContent = 'Updating the library…';
     await saveIndex();
-    S.draft = null; S.step = 1; S.view = 'library'; S.topic = 'All'; render();
+    S.draft = null;
+    if (S.queue.length) { S.step = 1; render(); await handlePdfFile(S.queue.shift()); return; }
+    S.step = 1; S.view = 'library'; S.topic = 'All'; render();
   } catch (err) {
     btn.disabled = false;
     status.textContent = 'Nothing was saved: ' + err.message + ' — try again.';
@@ -1239,6 +1301,15 @@ document.addEventListener('click', async e => {
     status.textContent = 'Asking CrossRef…';
     try {
       mergeCrossref(S.draft, await fromCrossref($('#f-doi').value));
+      const dup = findDuplicate(S.draft.doi, S.draft.title, S.draft.year,
+                                S.draft.firstAuthor, S.draft.editing || null);
+      if (dup) {
+        S.skipped = [{ name: (S.draft.file && S.draft.file.name) || 'this file',
+                       title: dup.title, year: dup.year }];
+        S.draft = null;
+        if (S.queue.length) return handlePdfFile(S.queue.shift());
+        S.step = 1; return render();
+      }
       render();
       const after = $('#doi-status');
       if (after) after.textContent = 'Filled from the publisher record. Check the corresponding author.';
@@ -1260,6 +1331,19 @@ document.addEventListener('click', async e => {
 
   if (id === 'btn-pick') {
     collectDraft();
+    if (!S.draft.doc) {
+      const btn = e.target;
+      btn.disabled = true; btn.textContent = 'Fetching the PDF…';
+      try {
+        const blob = await download(S.draft.pdfId);
+        const pdf = await pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
+        S.draft.doc = pdf; S.draft.pages = pdf.numPages;
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Choose cover from the PDF';
+        alert('The PDF could not be fetched from Drive: ' + err.message);
+        return;
+      }
+    }
     S.draft.picking = true; S.draft.sel = null; S.draft.page = S.draft.page || 1;
     render();
   }
