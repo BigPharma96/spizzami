@@ -165,9 +165,9 @@
 
 /* Bump these two together on every release.
    Minor fix → 2.1, 2.2 …   Larger change → 3.0 */
-const VERSION = '2.5';
-const WHATS_NEW = 'several PDFs can be added in one go, duplicates are skipped automatically, ' +
-                  'and the cover can be changed after a paper is saved';
+const VERSION = '2.6';
+const WHATS_NEW = 'formatting codes no longer appear in titles from CrossRef, ' +
+                  'and duplicate detection ignores them when comparing';
 
 const SCOPE  = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER = 'SpizzaMi';
@@ -568,6 +568,17 @@ function guessYear(text) {
 /* ── CrossRef ───────────────────────────────────────────
    The publisher's own record, looked up by DOI. Far more reliable than
    anything that can be inferred from how a page is laid out. */
+/* CrossRef returns JATS markup wherever a publisher used formatting: <scp> for
+   small caps, <i>, <sub>, <sup>. Left in, it shows up as literal tags on the card. */
+function stripMarkup(s) {
+  return String(s || '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&').replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+    .replace(/\s+/g, ' ').trim();
+}
+
 async function fromCrossref(doi) {
   const clean = String(doi).trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, '');
   if (!/^10\.\d{4,9}\//.test(clean)) throw new Error('That does not look like a DOI.');
@@ -592,15 +603,13 @@ async function fromCrossref(doi) {
   /* CrossRef abstracts arrive as JATS markup when they arrive at all. */
   let abstract = '';
   if (w.abstract) {
-    abstract = w.abstract.replace(/<[^>]+>/g, ' ')
-      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-      .replace(/\s+/g, ' ').replace(/^\s*Abstract\s*/i, '').trim();
+    abstract = stripMarkup(w.abstract).replace(/^\s*Abstract\s*/i, '').trim();
   }
 
   return {
-    title: Array.isArray(w.title) ? w.title[0] : (w.title || ''),
-    journal: (Array.isArray(w['container-title']) ? w['container-title'][0]
-             : w['container-title']) || '',
+    title: stripMarkup(Array.isArray(w.title) ? w.title[0] : (w.title || '')),
+    journal: stripMarkup((Array.isArray(w['container-title']) ? w['container-title'][0]
+             : w['container-title']) || ''),
     year: dateParts[0] || '',
     firstAuthor,
     authors,
@@ -1150,7 +1159,7 @@ document.addEventListener('input', e => {
    proof, while a title match alone is not — two papers can share a title and be
    different work, so the year or the first author has to agree as well. */
 function findDuplicate(doi, title, year, firstAuthor, ignoreId) {
-  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const norm = s => stripMarkup(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const d = norm(doi), t = norm(title), y = String(year || '').trim();
   const fa = surname(firstAuthor);
   return S.papers.find(p => {
