@@ -96,6 +96,15 @@
   .dropzone:hover{border-color:#8A8A87;background:#E3E3E0;color:#000}
   .dropzone.over{border-color:#000;background:#DEDEDB;color:#000}
   .dropzone .big{display:block;font-size:18px;margin-bottom:4px}
+  .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.34);display:none;
+            align-items:center;justify-content:center;padding:20px;z-index:50}
+  .backdrop.on{display:flex}
+  .modal{background:var(--bg);border:1px solid var(--rule);max-width:460px;width:100%;
+         padding:22px 24px;box-shadow:0 6px 28px rgba(0,0,0,.22)}
+  .modal h2{font-size:21px;margin:0 0 10px;line-height:1.3}
+  .modal ul{margin:10px 0 0 18px;padding:0;font-size:14.5px}
+  .modal li{margin-bottom:5px}
+  .modal .actions{margin-top:20px;text-align:right}
   .kwpanel{background:var(--panel);border:1px solid var(--rule);padding:10px 12px;margin-bottom:16px}
   .kwbox{display:inline-block;font-size:13px;margin:0 14px 6px 0;cursor:pointer;white-space:nowrap}
   .kwbox input{margin-right:4px;vertical-align:middle}
@@ -149,6 +158,14 @@
     </div>
     <div id="view"></div>
   </main>
+</div>
+
+<div class="backdrop" id="backdrop">
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
+    <h2 id="modal-title">Already in your library</h2>
+    <div id="modal-body"></div>
+    <div class="actions"><button class="btn" id="modal-ok">OK</button></div>
+  </div>
 </div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -924,15 +941,7 @@ function renderAdd() {
       <span class="big">Drop PDFs here</span>
       <span>or click to choose them from your device</span>
     </div>
-    <p id="read-status" class="spinner"></p>
-    ${S.skipped.length ? `<div class="banner" style="display:block">
-      <strong>${S.skipped.length} file${S.skipped.length > 1 ? 's' : ''} skipped —
-        already in your library</strong>
-      <ul style="margin:6px 0 0 18px;padding:0;font-size:14px">
-        ${S.skipped.map(s => `<li>${esc(s.name)} &mdash; ${
-          esc((s.title || 'already saved').slice(0, 70))}${
-          s.year ? ' (' + esc(s.year) + ')' : ''}</li>`).join('')}
-      </ul></div>` : ''}`;
+    <p id="read-status" class="spinner"></p>`;
 
   if (step === 2) return head + `<div class="narrow">
     ${d.file ? `<p class="note" style="margin-top:0">Reading <strong>${esc(d.file.name)}</strong></p>` : ''}
@@ -1119,6 +1128,37 @@ document.addEventListener('keydown', e => {
 
 /* Drop zone. Dropping outside it must not make the browser open the PDF
    and throw the person out of the app, so the window swallows those too. */
+/* Shown once the batch is over, so a run of ten files does not mean ten popups. */
+function reportSkipped() {
+  if (!S.skipped.length) return false;
+  const many = S.skipped.length > 1;
+  $('#modal-title').textContent = many
+    ? `${S.skipped.length} papers were already in your library`
+    : 'That paper is already in your library';
+  $('#modal-body').innerHTML = many
+    ? `<p style="margin:0">These files were not added:</p><ul>${
+        S.skipped.map(s => `<li>${esc(s.name)} &mdash; ${
+          esc((s.title || 'already saved').slice(0, 70))}${
+          s.year ? ' (' + esc(s.year) + ')' : ''}</li>`).join('')}</ul>`
+    : `<p style="margin:0">${esc(S.skipped[0].name)} matches <em>${
+        esc((S.skipped[0].title || 'a paper you already have').slice(0, 90))}</em>${
+        S.skipped[0].year ? ' (' + esc(S.skipped[0].year) + ')' : ''}, so it was not added again.</p>`;
+  $('#backdrop').classList.add('on');
+  $('#modal-ok').focus();
+  return true;
+}
+
+$('#modal-ok').onclick = () => {
+  $('#backdrop').classList.remove('on');
+  S.skipped = [];
+  S.step = 1; S.draft = null; S.view = 'library'; S.topic = 'All';
+  render();
+};
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('#backdrop').classList.contains('on')) $('#modal-ok').click();
+});
+
 /* Drop handling. The files have to be copied out of the event synchronously —
    the FileList belongs to the drag operation and is not guaranteed to survive an
    await. Anywhere on the add screen counts as a target, so a drop that misses the
@@ -1236,7 +1276,7 @@ async function handlePdfFile(file) {
       S.skipped.push({ name: file.name, title: dup.title, year: dup.year });
       S.draft = null;
       if (S.queue.length) return handlePdfFile(S.queue.shift());
-      S.step = 1; render();
+      S.step = 1; render(); reportSkipped();
       return;
     }
     S.step = 2; render();
@@ -1314,7 +1354,7 @@ document.addEventListener('click', async e => {
     await saveIndex();
     S.draft = null;
     if (S.queue.length) { S.step = 1; render(); await handlePdfFile(S.queue.shift()); return; }
-    S.step = 1; S.view = 'library'; S.topic = 'All'; render();
+    S.step = 1; S.view = 'library'; S.topic = 'All'; render(); reportSkipped();
   } catch (err) {
     btn.disabled = false;
     status.textContent = 'Nothing was saved: ' + err.message + ' — try again.';
@@ -1339,7 +1379,7 @@ document.addEventListener('click', async e => {
                        title: dup.title, year: dup.year }];
         S.draft = null;
         if (S.queue.length) return handlePdfFile(S.queue.shift());
-        S.step = 1; return render();
+        S.step = 1; render(); return reportSkipped();
       }
       render();
       const after = $('#doi-status');
