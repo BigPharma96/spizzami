@@ -165,9 +165,9 @@
 
 /* Bump these two together on every release.
    Minor fix → 2.1, 2.2 …   Larger change → 3.0 */
-const VERSION = '2.6';
-const WHATS_NEW = 'formatting codes no longer appear in titles from CrossRef, ' +
-                  'and duplicate detection ignores them when comparing';
+const VERSION = '3.0';
+const WHATS_NEW = 'the cover is now chosen first, so you can see which paper you are ' +
+                  'describing when adding several at once, and dropping files is more reliable';
 
 const SCOPE  = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER = 'SpizzaMi';
@@ -907,7 +907,7 @@ function renderAdd() {
   const d = S.draft;
   const step = S.step;
   const head = `<div class="steps">
-    ${['File', 'Topic and keywords', 'Review and correct'].map((t, i) =>
+    ${['File', 'Cover, topic and keywords', 'Details'].map((t, i) =>
       `<span class="${step === i + 1 ? 'on' : ''}">${i + 1}. ${t}</span>`).join('')}
     ${S.queue.length ? `<span style="margin-left:auto;color:var(--muted)">${
       S.queue.length} more file${S.queue.length > 1 ? 's' : ''} waiting</span>` : ''}
@@ -935,35 +935,13 @@ function renderAdd() {
       </ul></div>` : ''}`;
 
   if (step === 2) return head + `<div class="narrow">
-    <span class="label">Topic</span>
-    <div class="toolbar">
-      ${topics().map(t => `<button class="btn ${d.topic === t ? '' : 'ghost'}" data-pick-topic="${esc(t)}">${esc(t)}</button>`).join('')}
-      <button class="btn ${d.newTopic ? '' : 'ghost'}" data-pick-topic="__new">+ New topic</button>
-    </div>
-    ${d.newTopic ? `<div class="row"><span class="label">Name of the new topic</span>
-      <input class="field" id="f-newtopic" value="${esc(d.topic)}"></div>` : ''}
-    ${[0, 1, 2].map(i => `<div class="row"><span class="label">Keyword ${i + 1}</span>
-      <input class="field" id="f-kw${i}" value="${esc(d.keywords[i] || '')}"></div>`).join('')}
-    <button class="btn" data-step="3">Continue</button>
-    <button class="btn ghost" data-step="1">Back</button></div>`;
+    ${d.file ? `<p class="note" style="margin-top:0">Reading <strong>${esc(d.file.name)}</strong></p>` : ''}
 
-  return head + `<div class="narrow">
-    <p>The DOI lookup fills these fields from the publisher's own record. Check them
-       before saving.</p>
-
-    <div class="row"><span class="label">DOI</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input class="field" id="f-doi" style="flex:1;min-width:200px" value="${esc(d.doi || '')}">
-        <button class="btn" id="btn-doi">Fetch details</button>
-      </div>
-      <p class="note" id="doi-status">${d.doi ? ''
-        : 'No DOI found in the PDF. Paste one here to fill the fields automatically.'}</p>
-    </div>
-
-    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px">
-      <div class="cover" style="width:190px"><img id="draft-cover" alt=""></div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px">
+      <div class="cover" style="width:210px"><img id="draft-cover" alt=""></div>
       <div style="font-size:14px;max-width:300px">
-        <p style="margin-top:0"><button class="btn ghost" id="btn-pick">Choose cover from the PDF</button></p>
+        <p style="margin-top:0">${esc((d.title || 'Untitled').slice(0, 110))}</p>
+        <p><button class="btn ghost" id="btn-pick">Choose cover from the PDF</button></p>
         <input type="file" accept="image/*" id="cover-input" />
         <p class="note">Or an image saved on this device.</p>
       </div>
@@ -981,6 +959,35 @@ function renderAdd() {
       <button class="btn" id="btn-crop">Use this</button>
       <button class="btn ghost" id="btn-nocrop">Cancel</button>
     </div>` : ''}
+
+    <span class="label">Topic</span>
+    <div class="toolbar">
+      ${topics().map(t => `<button class="btn ${d.topic === t ? '' : 'ghost'}" data-pick-topic="${esc(t)}">${esc(t)}</button>`).join('')}
+      <button class="btn ${d.newTopic ? '' : 'ghost'}" data-pick-topic="__new">+ New topic</button>
+    </div>
+    ${d.newTopic ? `<div class="row"><span class="label">Name of the new topic</span>
+      <input class="field" id="f-newtopic" value="${esc(d.topic)}"></div>` : ''}
+    ${[0, 1, 2].map(i => `<div class="row"><span class="label">Keyword ${i + 1}</span>
+      <input class="field" id="f-kw${i}" value="${esc(d.keywords[i] || '')}"></div>`).join('')}
+    <button class="btn" data-step="3">Continue</button>
+    <button class="btn ghost" data-step="1">Back</button></div>`;
+
+  return head + `<div class="narrow">
+    ${d.coverId || d.coverUrl ? `<div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px">
+      <div class="cover" style="width:120px;flex:none"><img id="draft-cover" alt=""></div>
+      <div class="note">${esc((d.file && d.file.name) || d.topic || '')}</div>
+    </div>` : ''}
+    <p>The DOI lookup fills these fields from the publisher's own record. Check them
+       before saving.</p>
+
+    <div class="row"><span class="label">DOI</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input class="field" id="f-doi" style="flex:1;min-width:200px" value="${esc(d.doi || '')}">
+        <button class="btn" id="btn-doi">Fetch details</button>
+      </div>
+      <p class="note" id="doi-status">${d.doi ? ''
+        : 'No DOI found in the PDF. Paste one here to fill the fields automatically.'}</p>
+    </div>
 
     <div class="row"><span class="label">Title</span><input class="field" id="f-title" value="${esc(d.title)}"></div>
     <div class="row"><span class="label">Journal</span>
@@ -1055,7 +1062,9 @@ document.addEventListener('click', async e => {
                    else if (d.back === 'list') { S.previewId = null; S.view = 'list'; }
                    else S.openId = null;
                    return render(); }
-  if (d.step)    { collectDraft(); S.step = Number(d.step); return render(); }
+  if (d.step)    { collectDraft(); S.step = Number(d.step);
+                   if (S.step === 1) S.draft = null;
+                   return render(); }
   if (d.page)    { collectDraft(); S.draft.page = Number(d.page); S.draft.sel = null;
                    render(); return showPage(Number(d.page)); }
 
@@ -1078,7 +1087,7 @@ document.addEventListener('click', async e => {
     const p = S.papers.find(x => x.id === d.edit);
     S.draft = { ...p, corresponding: (p.corresponding || []).join(', '),
                 keywords: p.keywords || [], editing: p.id, newTopic: false, emails: [] };
-    S.view = 'add'; S.step = 3; S.openId = null; return render();
+    S.view = 'add'; S.step = 2; S.openId = null; return render();
   }
 
   if (d.delete) {
@@ -1110,24 +1119,37 @@ document.addEventListener('keydown', e => {
 
 /* Drop zone. Dropping outside it must not make the browser open the PDF
    and throw the person out of the app, so the window swallows those too. */
+/* Drop handling. The files have to be copied out of the event synchronously —
+   the FileList belongs to the drag operation and is not guaranteed to survive an
+   await. Anywhere on the add screen counts as a target, so a drop that misses the
+   dashed rectangle still works instead of making the browser open the PDF. */
+function onAddScreen() { return S.view === 'add' && S.step === 1 && !S.draft; }
+
 ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => {
+  if (!onAddScreen()) return;
   e.preventDefault();
-  const z = e.target.closest && e.target.closest('#dropzone');
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  const z = $('#dropzone');
   if (z) z.classList.add('over');
 }));
 
 document.addEventListener('dragleave', e => {
-  const z = e.target.closest && e.target.closest('#dropzone');
-  if (z && !z.contains(e.relatedTarget)) z.classList.remove('over');
+  const z = $('#dropzone');
+  if (z && (e.clientX === 0 && e.clientY === 0)) z.classList.remove('over');
 });
 
-document.addEventListener('drop', async e => {
-  e.preventDefault();
-  const z = e.target.closest && e.target.closest('#dropzone');
+document.addEventListener('drop', e => {
+  const z = $('#dropzone');
   if (z) z.classList.remove('over');
-  if (!z) return;
+  if (!onAddScreen()) return;
+  e.preventDefault();
   const dt = e.dataTransfer;
-  if (dt && dt.files && dt.files.length) await queueFiles(dt.files);
+  if (!dt) return;
+  const files = dt.files && dt.files.length
+    ? Array.from(dt.files)
+    : Array.from(dt.items || [])
+        .filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean);
+  if (files.length) queueFiles(files);
 });
 
 document.addEventListener('click', e => {
