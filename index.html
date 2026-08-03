@@ -826,7 +826,7 @@ function filterBar() {
   const on = all.length - all.filter(k => S.kwOff.has(k)).length;
   return `<div class="toolbar">
       <span class="search">
-        <input id="search" placeholder="Search titles, authors, abstracts"
+        <input id="search" placeholder="Search titles, authors, abstracts, notes"
                value="${esc(S.query)}" aria-label="Search the library">
         <button id="btn-search" aria-label="Search" title="Search">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
