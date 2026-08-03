@@ -105,6 +105,15 @@
   .modal ul{margin:10px 0 0 18px;padding:0;font-size:14.5px}
   .modal li{margin-bottom:5px}
   .modal .actions{margin-top:20px;text-align:right}
+  .storagebar{margin-bottom:14px;font-size:13px;color:var(--muted)}
+  .storagebar-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .storagebar-refresh{cursor:pointer;border:none;background:none;color:var(--muted);
+                      font-size:13px;padding:0;text-decoration:underline;
+                      text-underline-offset:2px}
+  .storagebar-refresh:hover{color:#000}
+  .storagebar-track{height:5px;background:var(--rule-soft);border-radius:2px;
+                    margin-top:5px;max-width:320px;overflow:hidden}
+  .storagebar-fill{height:100%;background:#3E5148;border-radius:2px}
   .kwpanel{background:var(--panel);border:1px solid var(--rule);padding:10px 12px;margin-bottom:16px}
   .kwbox{display:inline-block;font-size:13px;margin:0 14px 6px 0;cursor:pointer;white-space:nowrap}
   .kwbox input{margin-right:4px;vertical-align:middle}
@@ -182,9 +191,9 @@
 
 /* Bump these two together on every release.
    Minor fix → 2.1, 2.2 …   Larger change → 3.0 */
-const VERSION = '3.0';
-const WHATS_NEW = 'the cover is now chosen first, so you can see which paper you are ' +
-                  'describing when adding several at once, and dropping files is more reliable';
+const VERSION = '3.1';
+const WHATS_NEW = 'the library now shows how many papers you have and how much space ' +
+                  'they use in your Drive';
 
 const SCOPE  = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER = 'SpizzaMi';
@@ -196,6 +205,7 @@ const S = {
   papers: [], deleted: [], view: 'library', topic: 'All', sort: 'year',
   query: '', kwOff: new Set(), kwOpen: false, desc: true,
   since: 'all', sinceOpen: false, queue: [], skipped: [],
+  storage: null, storageLoading: false,
   openId: null, previewId: null, draft: null, step: 1
 };
 
@@ -333,6 +343,55 @@ async function upload(name, blob, mime, fileId) {
 
 async function download(fileId) {
   return (await drive(`drive/v3/files/${fileId}?alt=media`)).blob();
+}
+
+/* Real space used by SpizzaMi, read straight from Drive rather than kept in a
+   running total — that way it is correct even for papers added before this
+   feature existed, with nothing to migrate. */
+async function driveFolderUsage() {
+  let bytes = 0, files = 0, token = null;
+  do {
+    const q = encodeURIComponent(`'${S.folderId}' in parents and trashed=false`);
+    const url = `drive/v3/files?q=${q}&fields=nextPageToken,files(size)&pageSize=1000` +
+                (token ? '&pageToken=' + token : '');
+    const r = await (await drive(url)).json();
+    for (const f of (r.files || [])) bytes += Number(f.size) || 0;
+    files += (r.files || []).length;
+    token = r.nextPageToken || null;
+  } while (token);
+  return { bytes, files };
+}
+
+/* The account-wide quota. about.get works with drive.file even though the
+   number it returns covers all of Drive (and, for "usage", Gmail and Photos
+   too) — there's no way to ask Google for a SpizzaMi-only ceiling. */
+async function driveQuota() {
+  const r = await (await drive('drive/v3/about?fields=storageQuota')).json();
+  return r.storageQuota || {};
+}
+
+function formatBytes(n) {
+  if (!n && n !== 0) return '—';
+  if (n < 1024) return n + ' B';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return (v >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + ' ' + units[i];
+}
+
+/* Cached for the session — recomputed after a save or delete, or on request
+   via the small refresh control, not on every render. */
+async function loadStorage(force) {
+  if (S.storageLoading || (S.storage && !force)) return;
+  S.storageLoading = true;
+  try {
+    const [folder, quota] = await Promise.all([driveFolderUsage(), driveQuota()]);
+    S.storage = { folderBytes: folder.bytes, folderFiles: folder.files,
+                  quotaUsage: Number(quota.usage), quotaLimit: quota.limit ? Number(quota.limit) : null,
+                  at: Date.now() };
+  } catch (err) { /* shown as "unavailable" rather than surfaced as an error */ }
+  S.storageLoading = false;
+  render();
 }
 
 /* ── The index file ─────────────────────────────────────── */
@@ -710,6 +769,32 @@ function filtered() {
 }
 
 /* Search box and keyword panel, shown above both the library and the list. */
+function storageStrip() {
+  const papers = S.papers.length;
+  const paperWord = papers === 1 ? 'paper' : 'papers';
+
+  if (!S.storage) {
+    if (!S.storageLoading) loadStorage();
+    return `<div class="storagebar">${papers} ${paperWord} &middot; checking Drive storage…</div>`;
+  }
+
+  const s = S.storage;
+  const parts = [`${papers} ${paperWord}`, `${formatBytes(s.folderBytes)} in SpizzaMi`];
+  let bar = '';
+  if (s.quotaLimit) {
+    const pct = Math.min(100, (s.quotaUsage / s.quotaLimit) * 100);
+    parts.push(`${formatBytes(s.quotaUsage)} of ${formatBytes(s.quotaLimit)} used in your Google account`);
+    bar = `<div class="storagebar-track"><div class="storagebar-fill" style="width:${pct}%"></div></div>`;
+  } else if (!isNaN(s.quotaUsage)) {
+    parts.push(`${formatBytes(s.quotaUsage)} used in your Google account (no storage limit)`);
+  }
+
+  return `<div class="storagebar">
+    <div class="storagebar-row"><span>${parts.join(' &middot; ')}</span>
+      <button class="storagebar-refresh" id="storage-refresh" title="Refresh">refresh</button>
+    </div>${bar}</div>`;
+}
+
 function filterBar() {
   const all = keywordsInScope();
   const on = all.length - all.filter(k => S.kwOff.has(k)).length;
@@ -776,7 +861,7 @@ function cardHtml(p) {
 
 function renderLibrary() {
   const list = filtered();
-  const head = `<div class="toolbar">${topicBar()}</div>` + filterBar();
+  const head = storageStrip() + `<div class="toolbar">${topicBar()}</div>` + filterBar();
   return head + (list.length
     ? `<div class="grid">${list.map(cardHtml).join('')}</div>`
     : filtering()
@@ -850,7 +935,7 @@ const SORTS = [['year', 'year'], ['journal', 'journal'],
 function renderList() {
   const rows = [...filtered()].sort(compare);
 
-  return `<div class="toolbar">${topicBar()}</div>` + filterBar() +
+  return storageStrip() + `<div class="toolbar">${topicBar()}</div>` + filterBar() +
     `<div class="toolbar"><span class="caption">Sort by</span>
       ${SORTS.map(([s, label]) =>
         `<button class="btn ${s === S.sort ? '' : 'ghost'}" data-sort="${s}">${label}${
@@ -883,7 +968,7 @@ function renderRecent() {
     .filter(p => { const t = Date.parse(addedOn(p)); return !isNaN(t) && t >= cut; })
     .sort((a, b) => addedOn(b).localeCompare(addedOn(a)));
 
-  return `<div class="toolbar">${topicBar()}</div>` + filterBar() + (list.length
+  return storageStrip() + `<div class="toolbar">${topicBar()}</div>` + filterBar() + (list.length
     ? `<div class="grid">${list.map(cardHtml).join('')}</div>`
     : `<p>Nothing was added in the last seven days.</p>`);
 }
@@ -1117,6 +1202,7 @@ document.addEventListener('click', async e => {
     try { await saveIndex(); }
     catch (err) { alert('The files were deleted but the library index could not be updated: '
                         + err.message); }
+    loadStorage(true);
     S.view = 'library'; return render();
   }
 });
@@ -1354,6 +1440,7 @@ document.addEventListener('click', async e => {
     await saveIndex();
     S.draft = null;
     if (S.queue.length) { S.step = 1; render(); await handlePdfFile(S.queue.shift()); return; }
+    loadStorage(true);
     S.step = 1; S.view = 'library'; S.topic = 'All'; render(); reportSkipped();
   } catch (err) {
     btn.disabled = false;
@@ -1390,6 +1477,7 @@ document.addEventListener('click', async e => {
     }
   }
 
+  if (id === 'storage-refresh') { loadStorage(true); }
   if (id === 'btn-kw')    { S.kwOpen = !S.kwOpen; if (S.kwOpen) S.sinceOpen = false; render(); }
   if (id === 'btn-since') { S.sinceOpen = !S.sinceOpen; if (S.sinceOpen) S.kwOpen = false; render(); }
   if (e.target.closest && e.target.closest('#btn-search')) {
