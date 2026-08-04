@@ -37,7 +37,10 @@
   .row{margin-bottom:14px}
 
   header{border-bottom:1px solid var(--rule);background:#E2E2DF;padding:14px 20px;
-         display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
+         display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .brandrow{display:flex;align-items:center}
+  #news-app{flex-basis:100%;order:3;margin-top:2px}
+  nav.wide{order:2}
   .wordmark{font-size:24px;letter-spacing:-.01em}
   .wordmark .ver{font-size:.62em;letter-spacing:0}
   nav{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
@@ -224,14 +227,13 @@
 <!-- ══ App ══ -->
 <div id="app" class="hidden">
   <header>
-    <button class="burger" id="btn-burger" aria-label="Menu" aria-expanded="false">
-      <svg width="19" height="15" viewBox="0 0 19 15" aria-hidden="true">
-        <path d="M1 1.5h17M1 7.5h17M1 13.5h17" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
-      </svg>
-    </button>
-    <div>
+    <div class="brandrow">
+      <button class="burger" id="btn-burger" aria-label="Menu" aria-expanded="false">
+        <svg width="19" height="15" viewBox="0 0 19 15" aria-hidden="true">
+          <path d="M1 1.5h17M1 7.5h17M1 13.5h17" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
       <span class="wordmark" id="wm-app">SpizzaMi</span>
-      <div class="note" id="news-app" style="margin-top:2px"></div>
     </div>
     <nav class="wide">
       <button class="btn ghost" data-view="library">Library</button>
@@ -247,6 +249,7 @@
         </svg>
       </button>
     </nav>
+    <div class="note" id="news-app"></div>
   </header>
 
   <div class="scrim" id="scrim"></div>
@@ -316,7 +319,7 @@ const S = {
   papers: [], deleted: [], view: 'library', topic: 'All', sort: 'year',
   query: '', kwOff: new Set(), kwOpen: false, desc: true,
   since: 'all', sinceOpen: false, queue: [], skipped: [], topicOpen: false,
-  menu: false, picking: false, picked: new Set(), binned: [],
+  menu: false, picking: false, picked: new Set(), binned: [], backArmed: false,
   storage: null, storageLoading: false,
   openId: null, previewId: null, draft: null, step: 1
 };
@@ -1362,9 +1365,10 @@ document.addEventListener('click', async e => {
   }
 
   if (d.selectToggle !== undefined) {
-    S.picking = !S.picking;
-    if (!S.picking) S.picked.clear();
     S.menu = false; syncMenu();
+    if (S.picking) { history.back(); return; }   /* popstate does the exiting */
+    S.picking = true;
+    armBack();
     return render();
   }
 
@@ -1548,6 +1552,7 @@ document.addEventListener('pointerdown', e => {
       press.fired = true;
       S.picking = true;
       S.picked.add(press.id);
+      armBack();
       if (navigator.vibrate) navigator.vibrate(12);
       render();
     }, 500) };
@@ -2056,6 +2061,20 @@ $('#remember').onchange = e => {
   localStorage.setItem(REMEMBER, e.target.checked ? '1' : '0');
   if (!e.target.checked) forgetToken();
 };
+/* ── The back button ────────────────────────────────────
+   Back peels one layer at a time: selection first, then the app itself, then
+   the page. Each layer that can be gone back out of pushes a dummy history
+   entry when it opens, so pressing back consumes that entry instead of leaving
+   the site. The drawer re-arms its entry, since closing it is not a level. */
+function armBack() { history.pushState({ sp: Date.now() }, ''); }
+
+window.addEventListener('popstate', () => {
+  if (S.menu)    { S.menu = false; syncMenu(); armBack(); return; }
+  if (S.picking) { S.picking = false; S.picked.clear(); render(); return; }
+  if (S.token)   { signOut(); return; }
+  /* Nothing of ours left to close — the browser leaves the page. */
+});
+
 function signOut() {
   if (S.token) google.accounts.oauth2.revoke(S.token, () => {});
   forgetToken();
@@ -2063,7 +2082,7 @@ function signOut() {
   const box = $('#remember'); if (box) box.checked = false;
   S.token = null; S.papers = []; S.deleted = []; S.binned = [];
   S.noteEdit = null; S.picking = false; S.picked.clear();
-  S.menu = false; syncMenu();
+  S.menu = false; S.backArmed = false; syncMenu();
   document.body.classList.remove('picking');
   coverCache.clear();
   $('#signin-status').textContent = '';
@@ -2077,11 +2096,14 @@ function syncMenu() {
   $('#btn-burger').setAttribute('aria-expanded', S.menu ? 'true' : 'false');
 }
 
-$('#btn-burger').onclick = () => { S.menu = !S.menu; syncMenu(); };
-$('#scrim').onclick = () => { S.menu = false; syncMenu(); };
+$('#btn-burger').onclick = () => {
+  S.menu = !S.menu; syncMenu();
+  if (S.menu) armBack();
+};
+$('#scrim').onclick = () => { if (S.menu) history.back(); };
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && S.menu) { S.menu = false; syncMenu(); }
+  if (e.key === 'Escape' && S.menu) history.back();
 });
 
 /* ── Deleting a selection ───────────────────────────────── */
@@ -2108,6 +2130,7 @@ function confirmBinPicked() {
 async function start() {
   $('#signin').classList.add('hidden');
   $('#app').classList.remove('hidden');
+  if (!S.backArmed) { armBack(); S.backArmed = true; }
   $('#view').innerHTML = '<p class="spinner">Opening your library…</p>';
   try {
     S.folderId = await findOrCreateFolder();
